@@ -25,12 +25,6 @@ try:
 except Exception as e:
     print(e)
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-
 # Define conversation states
 NAME, CLASS = range(2)
 
@@ -136,7 +130,7 @@ async def notify_users():
         await bot.send_message(chat_id=user_id, text=message)
 
 async def announce_new_problem():
-    chat_id = 7320259947 # os.environ['CHAT_ID']
+    chat_id = os.environ['CHAT_ID']
     problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
 
     if problem_number > 0:
@@ -145,7 +139,6 @@ async def announce_new_problem():
     text_message = "Your scheduled announcement text here."
     # Download the image from Cloudflare R2
     image_path = f"Problem {problem_number + 1}.jpg"
-    # print("img path:", f"Problem {problem_number + 1}.jpg", ";", image_path)
     s3_client.download_file("mig-telegram", image_path, image_path)
 
     if problem_number > 0:
