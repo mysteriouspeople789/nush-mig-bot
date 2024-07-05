@@ -13,7 +13,6 @@ import pytz
 import boto3
 
 # MongoDB connection URI
-# uri = f"mongodb+srv://ding:{os.environ['DB_PASSWORD']}@helloworld.2revect.mongodb.net?appName=HelloWorld"
 uri = f"mongodb+srv://dingchenghao283:{os.environ['DB_PASSWORD']}@telegram-2024.ehpqyci.mongodb.net/?appName=Telegram-2024"
 
 # Create a new client and connect to the server
