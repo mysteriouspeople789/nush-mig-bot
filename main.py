@@ -1,4 +1,6 @@
 import logging
+import random
+
 import certifi
 import requests
 from telegram import Update, InputFile
@@ -8,7 +10,7 @@ from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import boto3
 
@@ -25,6 +27,12 @@ try:
 except Exception as e:
     print(e)
 
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
 # Define conversation states
 NAME, CLASS = range(2)
 
@@ -32,6 +40,7 @@ NAME, CLASS = range(2)
 db = client.get_database('main')
 users_collection = db.get_collection('users')
 problems_collection = db.get_collection('problems')
+games_collection = db.get_collection('games')
 
 bot = Bot(token=os.environ['BOT_TOKEN'])
 
@@ -130,7 +139,7 @@ async def notify_users():
         await bot.send_message(chat_id=user_id, text=message)
 
 async def announce_new_problem():
-    chat_id = os.environ['CHAT_ID']
+    chat_id = 7320259947 # os.environ['CHAT_ID']
     problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
 
     if problem_number > 0:
@@ -139,6 +148,7 @@ async def announce_new_problem():
     text_message = "Your scheduled announcement text here."
     # Download the image from Cloudflare R2
     image_path = f"Problem {problem_number + 1}.jpg"
+    # print("img path:", f"Problem {problem_number + 1}.jpg", ";", image_path)
     s3_client.download_file("mig-telegram", image_path, image_path)
 
     if problem_number > 0:
@@ -155,6 +165,65 @@ async def announce_new_problem():
 
     problems_collection.update_one({'_id': 'current_problem'}, {'$inc': {'number': 1}})
 
+
+# Game handlers
+async def game2_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    context.user_data['correct_count'] = 0
+    context.user_data['start_time'] = datetime.now()
+    context.user_data['game_active'] = True  # Flag to indicate the game is active
+
+    # Send the first sum
+    await send_next_sum(update, context)
+
+
+async def send_next_sum(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'start_time' not in context.user_data or not context.user_data.get('game_active', False):
+        return
+
+    elapsed_time = (datetime.now() - context.user_data['start_time']).total_seconds()
+    if elapsed_time >= 30:
+        await game2_end(update, context)
+        return
+
+    # Generate two random numbers and their sum
+    num1 = random.randint(1, 10)
+    num2 = random.randint(1, 10)
+    current_sum = num1 + num2
+
+    context.user_data['current_sum'] = current_sum
+    await update.message.reply_text(f"{num1} + {num2} = ?")
+
+
+async def game2_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'current_sum' not in context.user_data or not context.user_data.get('game_active', False):
+        return
+
+    user = update.message.from_user
+    user_answer = int(update.message.text)
+
+    if user_answer == context.user_data['current_sum']:
+        context.user_data['correct_count'] += 1
+
+    await send_next_sum(update, context)
+
+
+async def game2_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    correct_count = context.user_data.get('correct_count', 0)
+
+    game_data = {
+        'user_id': user.id,
+        'correct_count': correct_count,
+        'timestamp': datetime.now()
+    }
+    games_collection.insert_one(game_data)
+
+    await update.message.reply_text(f"Game over! You got {correct_count} correct answers.")
+
+    # Reset user data
+    context.user_data.clear()
+
 # Main function
 if __name__ == '__main__':
     application = ApplicationBuilder().token(os.environ['BOT_TOKEN']).build()
@@ -170,10 +239,12 @@ if __name__ == '__main__':
 
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("answer", answer))
+    application.add_handler(CommandHandler("game2", game2_start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, game2_answer))
 
     # Scheduler for announcements
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Singapore'))
-    scheduler.add_job(announce_new_problem, 'cron', day_of_week='fri', hour=20, minute=0)
+    scheduler.add_job(announce_new_problem, 'cron', day_of_week='fri', hour=23, minute=10)
     scheduler.start()
 
     application.run_polling()
