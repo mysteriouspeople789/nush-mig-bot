@@ -47,10 +47,10 @@ games_collection = db.get_collection('games')
 bot = Bot(token=os.environ['BOT_TOKEN'])
 
 s3_client = boto3.client(
-    service_name ="s3",
-    endpoint_url = f"https://{os.environ['ACCOUNT_ID']}.r2.cloudflarestorage.com",
-    aws_access_key_id = os.environ['ACCESS_KEY_ID'],
-    aws_secret_access_key = os.environ['SECRET_ACCESS_KEY'],
+    service_name="s3",
+    endpoint_url=f"https://{os.environ['ACCOUNT_ID']}.r2.cloudflarestorage.com",
+    aws_access_key_id=os.environ['ACCESS_KEY_ID'],
+    aws_secret_access_key=os.environ['SECRET_ACCESS_KEY'],
     region_name="apac",
 )
 
@@ -108,23 +108,29 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {'$push': {f"answer{problem_number}": number}},
             upsert=True
         )
-        await update.message.reply_text(f"Your answer {number} has been saved. Number of attempts: {len(user_attempts)+1}")
+        await update.message.reply_text(
+            f"Your answer {number} has been saved. Number of attempts: {len(user_attempts) + 1}")
     else:
         await update.message.reply_text("Please provide an answer after the command. Example: /answer 42")
 
 
+async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Operation cancelled.")
+    return ConversationHandler.END
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('game1_active', False):
+        job = context.user_data.get('game1_end_job')
+        if job:
+            job.schedule_removal()
         context.user_data.clear()
     elif context.user_data.get('game2_active', False):
-        job = context.user_data.get('end_job')
+        job = context.user_data.get('game2_end_job')
         if job:
             job.schedule_removal()
         await update.message.reply_text("Game cancelled!")
         context.user_data.clear()
-    else:
-        await update.message.reply_text("Operation cancelled and data saved if available.")
-        return ConversationHandler.END
 
 
 async def notify_users():
@@ -146,11 +152,12 @@ async def notify_users():
         average_score = total_score / len(user_attempts)
         users_collection.update_one({'user_id': user_id}, {'$inc': {'score': average_score}})
         message = f"Your average score for problem {problem_number} is {round(average_score, 2)}, across all {len(user_attempts)}\
-        submissions. Your total score is {round(prev_score+average_score, 2)}."
+        submissions. Your total score is {round(prev_score + average_score, 2)}."
         await bot.send_message(chat_id=user_id, text=message)
 
+
 async def announce_new_problem():
-    chat_id = 7320259947 # os.environ['CHAT_ID']
+    chat_id = 7320259947  # os.environ['CHAT_ID']
     problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
 
     if problem_number > 0:
@@ -188,11 +195,11 @@ def evaluate_expression(expr):
 def generate_all_expressions(nums):
     operators = ['+', '-', '*', '/']
     perms = permutations(nums)
-    op_combos = product(operators, repeat=3)
     expressions = set()
 
     for perm in perms:
         a, b, c, d = perm
+        op_combos = product(operators, repeat=3)
         for ops in op_combos:
             op1, op2, op3 = ops
             expressions.add(f"({a}{op1}{b}){op2}({c}{op3}{d})")
@@ -207,22 +214,26 @@ def generate_all_expressions(nums):
 def find_solution(nums):
     all_expressions = generate_all_expressions(nums)
     for expr in all_expressions:
-        if round(evaluate_expression(expr), 5) == 24:
+        if not evaluate_expression(expr) is None and round(evaluate_expression(expr), 5) == 24:
             return expr
     return "No Solution"
 
 
 async def math24_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
+    user = update.message.from_user
+    await cancel(update, context)
     number1 = random.randrange(1, 10)
     number2 = random.randrange(1, 10)
     number3 = random.randrange(1, 10)
     number4 = random.randrange(1, 10)
     context.user_data['game1_active'] = True
     context.user_data['math24_numbers'] = [number1, number2, number3, number4]
+    context.user_data['game1_end_job'] = context.job_queue.run_once(game1_end_job, when=30,
+                                                                    data=(update.message.chat_id, user.id, context))
     await update.message.reply_text(f"Use the following numbers and the four operations (+, -, *, /) with brackets to "
                                     f"achieve the number 24! You may use the numbers in any order. If you think there "
-                                    f"is no solution, answer -1.\n\n{number1} {number2} {number3} {number4}")
+                                    f"is no solution, answer -1.\nTime limit: 30 seconds."
+                                    f"\n\n{number1} {number2} {number3} {number4}")
 
 
 def is_valid_user_expression(user_expr, nums):
@@ -230,7 +241,7 @@ def is_valid_user_expression(user_expr, nums):
         if not re.match(r'^[\d+\-*/()\s]+$', user_expr) or '//' in user_expr:
             return False
         # Check if the user's expression evaluates to 24
-        if round(evaluate_expression(user_expr), 5) != 24:
+        if not evaluate_expression(user_expr) is None and round(evaluate_expression(user_expr), 5) != 24:
             return False
 
         # Check if the user's expression uses exactly the provided numbers
@@ -244,8 +255,11 @@ def is_valid_user_expression(user_expr, nums):
 
 
 async def math24_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    job = context.user_data.get('game1_end_job')
+    if job:
+        job.schedule_removal()
     user = update.message.from_user
-    user_answer = update.message.text
+    user_answer = update.message.text.strip()
     correct = False
     solution = find_solution(context.user_data['math24_numbers'])
     if is_valid_user_expression(user_answer, context.user_data['math24_numbers']):
@@ -269,23 +283,31 @@ async def math24_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
 
+async def game1_end_job(context: ContextTypes.DEFAULT_TYPE):
+    chat_id, user_id, context = context.job.data
+    await context.bot.send_message(chat_id=chat_id, text=f"Time is up!")
+
+    # Reset user data
+    context.user_data.clear()
+
+
 # Game handlers
 async def sums_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
+    await cancel(update, context)
     user = update.message.from_user
     context.user_data['correct_count'] = 0
-    context.user_data['start_time'] = datetime.now()
     context.user_data['game2_active'] = True  # Flag to indicate the game is active
 
     # Set a job to end the game in exactly one minute
-    context.job_queue.run_once(game2_end_job, when=30, data=(update.message.chat_id, user.id, context))
+    context.user_data['game2_end_job'] = context.job_queue.run_once(game2_end_job, when=30,
+                                                                    data=(update.message.chat_id, user.id, context))
 
     # Send the first sum
     await send_next_sum(update, context)
 
 
 async def send_next_sum(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'start_time' not in context.user_data or not context.user_data.get('game2_active', False):
+    if 'correct_count' not in context.user_data or not context.user_data.get('game2_active', False):
         return
 
     # Generate two random numbers and their sum
@@ -313,6 +335,7 @@ async def sums_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def game2_end_job(context: ContextTypes.DEFAULT_TYPE):
     chat_id, user_id, context = context.job.data
     correct_count = context.user_data.get('correct_count', 0)
+    context.user_data.clear()
 
     game_data = {
         'user_id': user_id,
@@ -322,9 +345,6 @@ async def game2_end_job(context: ContextTypes.DEFAULT_TYPE):
     games_collection.insert_one(game_data)
 
     await context.bot.send_message(chat_id=chat_id, text=f"Game over! You got {correct_count} correct answers.")
-
-    # Reset user data
-    context.user_data.clear()
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -344,7 +364,7 @@ if __name__ == '__main__':
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name)],
             CLASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, clas)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("cancel", cancel_conv)],
     )
 
     application.add_handler(conv_handler)
