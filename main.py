@@ -340,7 +340,8 @@ async def game2_end_job(context: ContextTypes.DEFAULT_TYPE):
     game_data = {
         'user_id': user_id,
         'correct_count': correct_count,
-        'timestamp': datetime.now()
+        'timestamp': datetime.now(),
+        'game': 'sums',
     }
     games_collection.insert_one(game_data)
 
