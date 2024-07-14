@@ -1,5 +1,7 @@
 import logging
 import random
+import re
+from itertools import permutations, product
 
 import certifi
 import requests
@@ -112,8 +114,17 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Operation cancelled and data saved if available.")
-    return ConversationHandler.END
+    if context.user_data.get('game1_active', False):
+        context.user_data.clear()
+    elif context.user_data.get('game2_active', False):
+        job = context.user_data.get('end_job')
+        if job:
+            job.schedule_removal()
+        await update.message.reply_text("Game cancelled!")
+        context.user_data.clear()
+    else:
+        await update.message.reply_text("Operation cancelled and data saved if available.")
+        return ConversationHandler.END
 
 
 async def notify_users():
@@ -166,24 +177,115 @@ async def announce_new_problem():
     problems_collection.update_one({'_id': 'current_problem'}, {'$inc': {'number': 1}})
 
 
+# for math 24 game
+def evaluate_expression(expr):
+    try:
+        return eval(expr)
+    except ZeroDivisionError:
+        return None
+
+
+def generate_all_expressions(nums):
+    operators = ['+', '-', '*', '/']
+    perms = permutations(nums)
+    op_combos = product(operators, repeat=3)
+    expressions = set()
+
+    for perm in perms:
+        a, b, c, d = perm
+        for ops in op_combos:
+            op1, op2, op3 = ops
+            expressions.add(f"({a}{op1}{b}){op2}({c}{op3}{d})")
+            expressions.add(f"({a}{op1}({b}{op2}{c})){op3}{d}")
+            expressions.add(f"(({a}{op1}{b}){op2}{c}){op3}{d}")
+            expressions.add(f"{a}{op1}(({b}{op2}{c}){op3}{d})")
+            expressions.add(f"{a}{op1}({b}{op2}({c}{op3}{d}))")
+
+    return expressions
+
+
+def find_solution(nums):
+    all_expressions = generate_all_expressions(nums)
+    for expr in all_expressions:
+        if round(evaluate_expression(expr), 5) == 24:
+            return expr
+    return "No Solution"
+
+
+async def math24_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    number1 = random.randrange(1, 10)
+    number2 = random.randrange(1, 10)
+    number3 = random.randrange(1, 10)
+    number4 = random.randrange(1, 10)
+    context.user_data['game1_active'] = True
+    context.user_data['math24_numbers'] = [number1, number2, number3, number4]
+    await update.message.reply_text(f"Use the following numbers and the four operations (+, -, *, /) with brackets to "
+                                    f"achieve the number 24! You may use the numbers in any order. If you think there "
+                                    f"is no solution, answer -1.\n\n{number1} {number2} {number3} {number4}")
+
+
+def is_valid_user_expression(user_expr, nums):
+    try:
+        if not re.match(r'^[\d+\-*/()\s]+$', user_expr) or '//' in user_expr:
+            return False
+        # Check if the user's expression evaluates to 24
+        if round(evaluate_expression(user_expr), 5) != 24:
+            return False
+
+        # Check if the user's expression uses exactly the provided numbers
+        used_numbers = [int(n) for n in user_expr if n.isdigit()]
+        if sorted(used_numbers) != sorted(nums):
+            return False
+
+        return True
+    except:
+        return False
+
+
+async def math24_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    user_answer = update.message.text
+    correct = False
+    solution = find_solution(context.user_data['math24_numbers'])
+    if is_valid_user_expression(user_answer, context.user_data['math24_numbers']):
+        correct = True
+        await update.message.reply_text("Correct!")
+    elif user_answer == "-1" and solution == "No Solution":
+        correct = True
+        await update.message.reply_text("Correct!")
+    elif solution == "No Solution":
+        await update.message.reply_text("Wrong :( There is actually no solution!")
+    else:
+        await update.message.reply_text(f"Wrong :( A possible solution is {solution}.")
+    game_data = {
+        'user_id': user.id,
+        'correct': correct,
+        'numbers': context.user_data['math24_numbers'],
+        'timestamp': datetime.now(),
+        'game': '24'
+    }
+    games_collection.insert_one(game_data)
+    context.user_data.clear()
+
+
 # Game handlers
-async def game2_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def sums_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     user = update.message.from_user
     context.user_data['correct_count'] = 0
     context.user_data['start_time'] = datetime.now()
-    context.user_data['game_active'] = True  # Flag to indicate the game is active
+    context.user_data['game2_active'] = True  # Flag to indicate the game is active
+
+    # Set a job to end the game in exactly one minute
+    context.job_queue.run_once(game2_end_job, when=30, data=(update.message.chat_id, user.id, context))
 
     # Send the first sum
     await send_next_sum(update, context)
 
 
 async def send_next_sum(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'start_time' not in context.user_data or not context.user_data.get('game_active', False):
-        return
-
-    elapsed_time = (datetime.now() - context.user_data['start_time']).total_seconds()
-    if elapsed_time >= 30:
-        await game2_end(update, context)
+    if 'start_time' not in context.user_data or not context.user_data.get('game2_active', False):
         return
 
     # Generate two random numbers and their sum
@@ -195,8 +297,8 @@ async def send_next_sum(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"{num1} + {num2} = ?")
 
 
-async def game2_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'current_sum' not in context.user_data or not context.user_data.get('game_active', False):
+async def sums_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'current_sum' not in context.user_data or not context.user_data.get('game2_active', False):
         return
 
     user = update.message.from_user
@@ -208,21 +310,29 @@ async def game2_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_next_sum(update, context)
 
 
-async def game2_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
+async def game2_end_job(context: ContextTypes.DEFAULT_TYPE):
+    chat_id, user_id, context = context.job.data
     correct_count = context.user_data.get('correct_count', 0)
 
     game_data = {
-        'user_id': user.id,
+        'user_id': user_id,
         'correct_count': correct_count,
         'timestamp': datetime.now()
     }
     games_collection.insert_one(game_data)
 
-    await update.message.reply_text(f"Game over! You got {correct_count} correct answers.")
+    await context.bot.send_message(chat_id=chat_id, text=f"Game over! You got {correct_count} correct answers.")
 
     # Reset user data
     context.user_data.clear()
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'math24_numbers' in context.user_data and context.user_data.get('game1_active', False):
+        await math24_answer(update, context)
+    elif 'current_sum' in context.user_data and context.user_data.get('game2_active', False):
+        await sums_answer(update, context)
+
 
 # Main function
 if __name__ == '__main__':
@@ -239,12 +349,14 @@ if __name__ == '__main__':
 
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("answer", answer))
-    application.add_handler(CommandHandler("game2", game2_start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, game2_answer))
+    application.add_handler(CommandHandler("game1", math24_start))
+    application.add_handler(CommandHandler("game2", sums_start))
+    application.add_handler(CommandHandler("cancel", cancel))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Scheduler for announcements
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Singapore'))
-    scheduler.add_job(announce_new_problem, 'cron', day_of_week='fri', hour=23, minute=10)
+    scheduler.add_job(announce_new_problem, 'cron', day_of_week='fri', hour=20, minute=0)
     scheduler.start()
 
     application.run_polling()
