@@ -1,13 +1,15 @@
 import logging
 import random
 import re
+from functools import wraps
 from itertools import permutations, product
 
 import certifi
 import requests
 from telegram import Update, InputFile
 from telegram import Bot
-from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHandler, ContextTypes, ConversationHandler
+from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHandler, ContextTypes, ConversationHandler, \
+    CallbackContext
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import os
@@ -55,7 +57,23 @@ s3_client = boto3.client(
 )
 
 
+def restricted(func):
+    """Decorator to restrict access to users who are in the specified group chat."""
+    async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user_id = update.effective_user.id
+        try:
+            chat_member = await context.bot.get_chat_member(chat_id=os.environ['CHAT_ID'], user_id=user_id)
+            if chat_member.status in ['member', 'administrator', 'creator']:
+                return await func(update, context, *args, **kwargs)
+            else:
+                await update.message.reply_text('Please join the MIG Channel to use this bot.')
+        except Exception as e:
+            await update.message.reply_text('Please join the MIG Channel to use this bot.')
+    return wrapped
+
+
 # Handlers
+@restricted
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Welcome to MIG Bot! To begin, enter your full name:")
     return NAME
@@ -81,6 +99,7 @@ async def clas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+@restricted
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     print("/answer chat id", update.effective_chat.id)
@@ -219,6 +238,7 @@ def find_solution(nums):
     return "No Solution"
 
 
+@restricted
 async def math24_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     await cancel(update, context)
@@ -292,6 +312,7 @@ async def game1_end_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 # Game handlers
+@restricted
 async def sums_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cancel(update, context)
     user = update.message.from_user
@@ -348,6 +369,7 @@ async def game2_end_job(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=chat_id, text=f"Game over! You got {correct_count} correct answers.")
 
 
+@restricted
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'math24_numbers' in context.user_data and context.user_data.get('game1_active', False):
         await math24_answer(update, context)
