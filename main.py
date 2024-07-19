@@ -75,6 +75,11 @@ def restricted(func):
 # Handlers
 @restricted
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    user_data = users_collection.find_one({'user_id': user.id})
+    if user_data is not None:
+        await update.message.reply_text("You have already registered your name and class.")
+        return ConversationHandler.END
     await update.message.reply_text("Welcome to MIG Bot! For verification, please enter your full name:")
     return NAME
 
@@ -95,7 +100,7 @@ async def clas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'points': 0.0,
     }
     users_collection.insert_one(user_data)
-    await update.message.reply_text("Your data has been saved.")
+    await update.message.reply_text("Done! You may use /help to view all available commands and get started.")
     return ConversationHandler.END
 
 
@@ -169,13 +174,13 @@ async def notify_users():
         total_score = sum(10 if attempt == correct_answer else 0 for attempt in user_attempts)
         average_score = total_score / len(user_attempts)
         users_collection.update_one({'user_id': user_id}, {'$inc': {'points': average_score}})
-        message = f"Your average score for problem {problem_number} is {round(average_score, 2)}, across all {len(user_attempts)}\
-        submissions. Your total score is {round(prev_score + average_score, 2)}."
+        message = f"Your average score for problem {problem_number} is {':.2f'.format(average_score)}, across all {len(user_attempts)}\
+        submissions. Your total score is {':.2f'.format(prev_score + average_score)}."
         await bot.send_message(chat_id=user_id, text=message)
 
 
 async def announce_new_problem():
-    chat_id = 7320259947  # os.environ['CHAT_ID']
+    chat_id = os.environ['CHAT_ID']
     problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
 
     if problem_number > 0:
@@ -383,6 +388,31 @@ async def game2_end_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 @restricted
+async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    user_data = users_collection.find_one({'user_id': user.id})
+    if user_data is None:
+        await update.message.reply_text(
+            "Please use the /start command to enter your name and class before using this command.")
+        return
+    current_points = user_data['points']
+    await update.message.reply_text(f"You currently have {':.2f'.format(current_points)} points")
+
+
+@restricted
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "/start - Register your name and class\n"
+        "/answer [number] - Submit your answer for the current problem\n"
+        "/game1 - Play Math24 (in a minute)\n"
+        "/game2 - Play Sums in 30 seconds\n"
+        "/points - Check your current points\n"
+        "/cancel - Cancel the current operation\n"
+        "/help - Show this help message"
+    )
+    await update.message.reply_text(help_text)
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'math24_numbers' in context.user_data and context.user_data.get('game1_active', False):
         await math24_answer(update, context)
@@ -391,13 +421,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def announce():
-    chat_id = 7320259947  # os.environ['CHAT_ID']
+    chat_id = os.environ['CHAT_ID']
     # problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
 
     # if problem_number > 0:
     #     await notify_users()
 
-    text_message = "Your scheduled announcement text here."
+    text_message = "test announcement"
     # Download the image from Cloudflare R2
     # image_path = f"Problem {problem_number + 1}.jpg"
     # s3_client.download_file("mig-telegram", image_path, image_path)
@@ -413,6 +443,7 @@ async def announce():
     #     os.remove(pdf_path)
     # await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
     # os.remove(image_path)
+
 
 # Main function
 if __name__ == '__main__':
@@ -431,13 +462,15 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("answer", answer))
     application.add_handler(CommandHandler("game1", math24_start))
     application.add_handler(CommandHandler("game2", sums_start))
+    application.add_handler(CommandHandler("points", check_points))
     application.add_handler(CommandHandler("cancel", cancel))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Scheduler for announcements
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Singapore'))
     scheduler.add_job(announce_new_problem, 'cron', day_of_week='sun', hour=20, minute=0)
-    scheduler.add_job(announce, 'date', run_date=datetime(2024, 7, 18, 7, 41))
+    # scheduler.add_job(announce, 'date', run_date=datetime(2024, 7, 19, 22, 36))
     scheduler.start()
 
     application.run_polling()
