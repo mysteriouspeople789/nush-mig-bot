@@ -174,8 +174,8 @@ async def notify_users():
         total_score = sum(10 if attempt == correct_answer else 0 for attempt in user_attempts)
         average_score = total_score / len(user_attempts)
         users_collection.update_one({'user_id': user_id}, {'$inc': {'points': average_score}})
-        message = f"Your average score for problem {problem_number} is {':.2f'.format(average_score)}, across all {len(user_attempts)}\
-        submissions. Your total score is {':.2f'.format(prev_score + average_score)}."
+        message = f"Your average score for problem {problem_number} is {average_score:.2f}, across all {len(user_attempts)}\
+        submissions. Your total score is {(prev_score + average_score):.2f}."
         await bot.send_message(chat_id=user_id, text=message)
 
 
@@ -186,7 +186,7 @@ async def announce_new_problem():
     if problem_number > 0:
         await notify_users()
 
-    text_message = "Your scheduled announcement text here."
+    text_message = '''Thank you everyone who submitted answers for the first MIG Amazing Challenge. The correct answer is **15**, and the solution is attached below. Here comes the second MIG Amazing Challenge!'''
     # Download the image from Cloudflare R2
     image_path = f"Problem {problem_number + 1}.jpg"
     # print("img path:", f"Problem {problem_number + 1}.jpg", ";", image_path)
@@ -253,6 +253,7 @@ async def math24_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cancel(update, context)
     context.user_data['game1_active'] = True
     context.user_data['correct_count'] = 0
+    context.user_data['attempted'] = 0
     context.user_data['game1_end_job'] = context.job_queue.run_once(game1_end_job, when=60,
                                                                     data=(update.message.chat_id, user.id, context))
     await update.message.reply_text(f"Use the following 4 numbers and the 4 operations (+, -, *, /) with brackets to "
@@ -288,7 +289,14 @@ async def send_next_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     number2 = random.randrange(1, 10)
     number3 = random.randrange(1, 10)
     number4 = random.randrange(1, 10)
+    if random.random() < 0.8:
+        while find_solution([number1, number2, number3, number4]) == "No Solution":
+            number1 = random.randrange(1, 10)
+            number2 = random.randrange(1, 10)
+            number3 = random.randrange(1, 10)
+            number4 = random.randrange(1, 10)
     context.user_data['math24_numbers'] = [number1, number2, number3, number4]
+    context.user_data['attempted'] += 1
 
     await update.message.reply_text(f"{number1} {number2} {number3} {number4}")
 
@@ -312,14 +320,23 @@ async def math24_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def game1_end_job(context: ContextTypes.DEFAULT_TYPE):
     chat_id, user_id, context = context.job.data
     correct_count = context.user_data.get('correct_count', 0)
-    await context.bot.send_message(chat_id=chat_id, text=f"Game over! You got {correct_count} correct answers.")
+    attempted = context.user_data.get('attempted', 0)
+    user_data = users_collection.find_one({'user_id': user_id})
+    if 'math24' in user_data:
+        high_score = user_data['math24']
+    else:
+        high_score = 0
+    high_score = max(high_score, correct_count)
+    await context.bot.send_message(chat_id=chat_id, text=f"Game over! You got {correct_count} correct answers. Your high score: {high_score}")
     game_data = {
         'user_id': user_id,
         'correct_count': correct_count,
+        'attempted': attempted,
         'timestamp': datetime.now(),
         'game': '24'
     }
     games_collection.insert_one(game_data)
+    users_collection.update_one({'user_id': user_id}, {'$set': {'math24': high_score}})
     # Reset user data
     context.user_data.clear()
 
@@ -335,6 +352,7 @@ async def sums_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Please use the /start command to enter your name and class before using this command.")
         return
     context.user_data['correct_count'] = 0
+    context.user_data['attempted'] = 0
     context.user_data['game2_active'] = True  # Flag to indicate the game is active
 
     # Set a job to end the game in exactly one minute
@@ -355,6 +373,7 @@ async def send_next_sum(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_sum = num1 + num2
 
     context.user_data['current_sum'] = current_sum
+    context.user_data['attempted'] += 1
     await update.message.reply_text(f"{num1} + {num2} = ?")
 
 
@@ -363,10 +382,12 @@ async def sums_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = update.message.from_user
-    user_answer = int(update.message.text.strip())
-
-    if user_answer == context.user_data['current_sum']:
-        context.user_data['correct_count'] += 1
+    try:
+        user_answer = int(update.message.text.strip())
+        if user_answer == context.user_data['current_sum']:
+            context.user_data['correct_count'] += 1
+    except:
+        pass
 
     await send_next_sum(update, context)
 
@@ -374,17 +395,25 @@ async def sums_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def game2_end_job(context: ContextTypes.DEFAULT_TYPE):
     chat_id, user_id, context = context.job.data
     correct_count = context.user_data.get('correct_count', 0)
+    attempted = context.user_data.get('attempted', 0)
     context.user_data.clear()
-
+    user_data = users_collection.find_one({'user_id': user_id})
+    if 'sums' in user_data:
+        high_score = user_data['sums']
+    else:
+        high_score = 0
+    high_score = max(high_score, correct_count)
+    await context.bot.send_message(chat_id=chat_id, text=f"Game over! You got {correct_count} correct answers. Your high score: {high_score}")
     game_data = {
         'user_id': user_id,
         'correct_count': correct_count,
+        'attempted': attempted,
         'timestamp': datetime.now(),
         'game': 'sums',
     }
     games_collection.insert_one(game_data)
+    users_collection.update_one({'user_id': user_id}, {'$set': {'sums': high_score}})
 
-    await context.bot.send_message(chat_id=chat_id, text=f"Game over! You got {correct_count} correct answers.")
 
 
 @restricted
@@ -396,7 +425,7 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Please use the /start command to enter your name and class before using this command.")
         return
     current_points = user_data['points']
-    await update.message.reply_text(f"You currently have {':.2f'.format(current_points)} points")
+    await update.message.reply_text(f"You currently have {current_points:.2f} points")
 
 
 @restricted
@@ -407,6 +436,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/game1 - Play Math24 (in a minute)\n"
         "/game2 - Play Sums in 30 seconds\n"
         "/points - Check your current points\n"
+        "/leaderboard - Display game leaderboard\n"
         "/cancel - Cancel the current operation\n"
         "/help - Show this help message"
     )
@@ -420,6 +450,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await sums_answer(update, context)
 
 
+async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    games = {
+        "sums": "Sums in a minute",
+        "math24": "Math 24",
+    }  # Add all game names here
+    leaderboard_text = "*Game Leaderboard*\n\n"
+
+    for game in games:
+        # Retrieve and sort top users by their points
+        top_users = list(users_collection.find({game: {'$exists': True}}).sort([(game, -1)]))
+        if not top_users:
+            leaderboard_text += f"{game}:\nNo users have points yet.\n\n"
+            continue
+
+        leaderboard_text += f"{games[game]}:\n"
+        current_rank = 1
+        last_score = None
+        display_count = 0
+        rank = 1
+
+        for i, user in enumerate(top_users):
+            user_name = user['name']
+            user_points = user[game]
+            if last_score is None or user_points != last_score:
+                rank = current_rank
+            if display_count < 5 or (user_points == last_score):
+                leaderboard_text += f"{rank}. {user_name} - {user_points} points\n"
+                display_count += 1
+            else:
+                break
+            last_score = user_points
+            current_rank += 1
+        leaderboard_text += "\n"
+
+    await update.message.reply_text(leaderboard_text, parse_mode='markdown')
+
+
 async def announce():
     chat_id = os.environ['CHAT_ID']
     # problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
@@ -427,7 +494,7 @@ async def announce():
     # if problem_number > 0:
     #     await notify_users()
 
-    text_message = "test announcement"
+    text_message = "btw the bot handle is @nush_mig_bot"
     # Download the image from Cloudflare R2
     # image_path = f"Problem {problem_number + 1}.jpg"
     # s3_client.download_file("mig-telegram", image_path, image_path)
@@ -463,14 +530,15 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("game1", math24_start))
     application.add_handler(CommandHandler("game2", sums_start))
     application.add_handler(CommandHandler("points", check_points))
+    application.add_handler(CommandHandler("leaderboard", game_leaderboard))
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Scheduler for announcements
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Singapore'))
-    scheduler.add_job(announce_new_problem, 'cron', day_of_week='sun', hour=20, minute=0)
-    # scheduler.add_job(announce, 'date', run_date=datetime(2024, 7, 19, 22, 36))
+    scheduler.add_job(announce_new_problem, 'cron', day_of_week='mon', hour=20, minute=10)
+    # scheduler.add_job(announce, 'date', run_date=datetime(2024, 7, 22, 20, 13))
     scheduler.start()
 
     application.run_polling()
