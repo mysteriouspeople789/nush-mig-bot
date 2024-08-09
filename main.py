@@ -1,6 +1,8 @@
 import logging
+import math
 import random
 import re
+import time
 from functools import wraps
 from itertools import permutations, product
 
@@ -59,6 +61,7 @@ s3_client = boto3.client(
 
 def restricted(func):
     """Decorator to restrict access to users who are in the specified group chat."""
+
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user_id = update.effective_user.id
         try:
@@ -69,6 +72,7 @@ def restricted(func):
                 await update.message.reply_text('Please join the MIG Channel to use this bot.')
         except Exception as e:
             await update.message.reply_text('Please join the MIG Channel to use this bot.')
+
     return wrapped
 
 
@@ -142,17 +146,27 @@ async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, sendConfirmation=True):
     if context.user_data.get('game1_active', False):
         job = context.user_data.get('game1_end_job')
         if job:
             job.schedule_removal()
+        if sendConfirmation:
+            await update.message.reply_text("Game cancelled!")
         context.user_data.clear()
     elif context.user_data.get('game2_active', False):
         job = context.user_data.get('game2_end_job')
         if job:
             job.schedule_removal()
-        await update.message.reply_text("Game cancelled!")
+        if sendConfirmation:
+            await update.message.reply_text("Game cancelled!")
+        context.user_data.clear()
+    elif context.user_data.get('game3_active', False):
+        job = context.user_data.get('game3_end_job')
+        if job:
+            job.schedule_removal()
+        if sendConfirmation:
+            await update.message.reply_text("Game cancelled!")
         context.user_data.clear()
 
 
@@ -171,7 +185,7 @@ async def notify_users():
         user_id = user['user_id']
         user_attempts = user.get(f'answer{problem_number}')
         prev_score = user['points']
-        total_score = sum(10 if attempt == correct_answer else 0 for attempt in user_attempts)
+        total_score = sum(50 if attempt == correct_answer else 0 for attempt in user_attempts)
         average_score = total_score / len(user_attempts)
         users_collection.update_one({'user_id': user_id}, {'$inc': {'points': average_score}})
         message = f"Your average score for problem {problem_number} is {average_score:.2f}, across all {len(user_attempts)}\
@@ -186,7 +200,7 @@ async def announce_new_problem():
     if problem_number > 0:
         await notify_users()
 
-    text_message = '''Thank you everyone who submitted answers for the first MIG Amazing Challenge. The correct answer is **15**, and the solution is attached below. Here comes the second MIG Amazing Challenge!'''
+    text_message = '''The answer for the second MIG Amazing Challenge was *8987726770*, and the solution is below. Here comes the third MIG Amazing Challenge!'''
     # Download the image from Cloudflare R2
     image_path = f"Problem {problem_number + 1}.jpg"
     # print("img path:", f"Problem {problem_number + 1}.jpg", ";", image_path)
@@ -197,7 +211,7 @@ async def announce_new_problem():
         pdf_path = f"Problem {problem_number}.pdf"
         s3_client.download_file("mig-telegram", pdf_path, pdf_path)
 
-    await bot.send_message(chat_id=chat_id, text=text_message)
+    await bot.send_message(chat_id=chat_id, text=text_message, parse_mode='markdown')
     if problem_number > 0:
         await bot.send_document(chat_id=chat_id, document=open(pdf_path, 'rb'))
         os.remove(pdf_path)
@@ -250,7 +264,7 @@ async def math24_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Please use the /start command to enter your name and class before using this command.")
         return
-    await cancel(update, context)
+    await cancel(update, context, False)
     context.user_data['game1_active'] = True
     context.user_data['correct_count'] = 0
     context.user_data['attempted'] = 0
@@ -327,7 +341,8 @@ async def game1_end_job(context: ContextTypes.DEFAULT_TYPE):
     else:
         high_score = 0
     high_score = max(high_score, correct_count)
-    await context.bot.send_message(chat_id=chat_id, text=f"Game over! You got {correct_count} correct answers. Your high score: {high_score}")
+    await context.bot.send_message(chat_id=chat_id,
+                                   text=f"Game over! You got {correct_count} correct answers. Your high score: {high_score}")
     game_data = {
         'user_id': user_id,
         'correct_count': correct_count,
@@ -344,7 +359,7 @@ async def game1_end_job(context: ContextTypes.DEFAULT_TYPE):
 # Game handlers
 @restricted
 async def sums_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await cancel(update, context)
+    await cancel(update, context, False)
     user = update.message.from_user
     user_data = users_collection.find_one({'user_id': user.id})
     if user_data is None:
@@ -403,7 +418,8 @@ async def game2_end_job(context: ContextTypes.DEFAULT_TYPE):
     else:
         high_score = 0
     high_score = max(high_score, correct_count)
-    await context.bot.send_message(chat_id=chat_id, text=f"Game over! You got {correct_count} correct answers. Your high score: {high_score}")
+    await context.bot.send_message(chat_id=chat_id,
+                                   text=f"Game over! You got {correct_count} correct answers. Your high score: {high_score}")
     game_data = {
         'user_id': user_id,
         'correct_count': correct_count,
@@ -414,6 +430,167 @@ async def game2_end_job(context: ContextTypes.DEFAULT_TYPE):
     games_collection.insert_one(game_data)
     users_collection.update_one({'user_id': user_id}, {'$set': {'sums': high_score}})
 
+
+# Game3 handlers
+@restricted
+async def game3_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await cancel(update, context, False)
+    user = update.message.from_user
+    user_data = users_collection.find_one({'user_id': user.id})
+    if user_data is None:
+        await update.message.reply_text(
+            "Please use the /start command to enter your name and class before using this command.")
+        return
+    context.user_data['game3_score'] = 0
+    context.user_data['game3_attempted'] = 0
+    context.user_data['game3_lives'] = 3
+    context.user_data['game3_start_time'] = time.time()
+    context.user_data['game3_max_time'] = 30
+    context.user_data['game3_active'] = True
+
+    context.user_data['game3_end_job'] = context.job_queue.run_once(game2_end_job, when=30,
+                                                                    data=(update.message.chat_id, user.id, context))
+
+    await game3_next_question(update, context)
+
+
+async def game3_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('game3_active', False):
+        return
+
+    score = context.user_data.get('game3_score', 0)
+    startTime = context.user_data.get('game3_start_time', time.time())
+    maxTime = context.user_data.get('game3_max_time', 30)
+
+    sign = random.uniform(0, (score + 10) ** (1 / 2.2) - 1.5)
+    worth = 1
+
+    if sign < 1:
+        x = random.randint((round((score + 2) ** 1.5 / 4)), (round((score + 4) ** 1.97 / 4)))
+        y = random.randint((round((score + 2) ** 1.5 / 4)), (round((score + 4) ** 1.97 / 4)))
+        correct = x + y
+        question = f"{x} + {y} = ?"
+    elif sign < 2:
+        y = random.randint((round((score + 2) ** 1.5 / 4)), (round((score + 4) ** 1.91 / 4)))
+        x = y + random.randint((round((score + 2) ** 1.5 / 4)), (round((score + 4) ** 1.91 / 4)))
+        correct = x - y
+        question = f"{x} - {y} = ?"
+    elif sign < 3:
+        x = random.randint((round((score) ** 1.29 / 4)), (round((score) ** 1.37 / 4)))
+        y = random.randint((round((score) ** 1.29 / 4)), (round((score) ** 1.37 / 4)))
+        correct = x * y
+        question = f"{x} x {y} = ?"
+    elif sign < 4:
+        y = random.randint((round((score) ** 1.16 / 4)), (round((score + 4) ** 1.24 / 4)))
+        x = y * random.randint((round((score) ** 1.23 / 6)), (round((score) ** 1.33 / 6)))
+        correct = x // y
+        question = f"{x} / {y} = ?"
+    elif sign < 5.5:
+        x = round(2 ** (random.uniform(2, math.log10(score) * 2 + 3)))
+        y = math.floor(math.log((score - 14) ** 2.5, x))
+        correct = x ** y
+        question = f"{x} ^ {y} = ?"
+    elif sign < 6.8:
+        x = random.randint((round((score) ** 1.38 / 4)), (round((score + 4) ** 1.52 / 4)))
+        y = x
+        correct = x
+        question = f"sqrt({x * y}) = ?"
+    elif sign < 8.6:
+        x = random.randint((round((score) / 7)), (round((score) ** 1.18 / 5)))
+        y = random.randint((round((score) / 7)), (round((score) ** 1.18 / 5)))
+        z = random.randint((round((score) / 7)), (round((score) ** 1.18 / 5)))
+        correct = x * y * z
+        worth = 2
+        question = f"[2 PTS] {x} x {y} x {z} = ?"
+    else:
+        x = 0
+        y = 0
+        while abs(x * y) < score / 4:
+            x = random.randint(-round((score) / 6), round((score) / 6))
+            y = random.randint(-round((score) / 6), round((score) / 6))
+        z = 1
+        correct = max(x, y)
+        worth = 2
+        question = f"[2 PTS] Find the maximum value of x such that {z}x^2 + {z * (-x - y)}x + {z * x * y} = 0"
+
+    context.user_data['game3_correct'] = correct
+    context.user_data['game3_worth'] = worth
+    await update.message.reply_text(f"{score}pts | {maxTime - (time.time() - startTime):.2f}s")
+    await update.message.reply_text(question)
+
+
+async def game3_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('game3_active', False):
+        return
+    user = update.message.from_user
+
+    try:
+        answer = int(update.message.text)
+    except ValueError:
+        await update.message.reply_text("Please enter a valid number.")
+        return
+
+    correct = context.user_data.get('game3_correct', 0)
+    worth = context.user_data.get('game3_worth', 1)
+    score = context.user_data.get('game3_score', 0)
+    lives = context.user_data.get('game3_lives', 3)
+    startTime = context.user_data.get('game3_start_time', time.time())
+    maxTime = context.user_data.get('game3_max_time', 30)
+    context.user_data['game3_attempted'] += 1
+
+    maxTime += 1  # account for delay in bot reply
+
+    if answer == correct:
+        score += worth
+        maxTime += score ** 0.53 * worth / 1.6
+        context.user_data['game3_score'] = score
+        context.user_data['game3_max_time'] = maxTime
+    else:
+        lives -= 1
+        context.user_data['game3_lives'] = lives
+        context.user_data['game3_max_time'] = maxTime
+        await update.message.reply_text(f"WRONG! You have {lives} lives left")
+
+
+    job = context.user_data.get('game3_end_job')
+    if job:
+        job.schedule_removal()
+    if lives == 0:
+        context.user_data['game3_end_job'] = context.job_queue.run_once(game3_end_job,
+                                                                        when=0,
+                                                                        data=(update.message.chat_id, user.id, context,
+                                                                              "You lost the game."))
+    else:
+        context.user_data['game3_end_job'] = context.job_queue.run_once(game3_end_job,
+                                                                        when=maxTime - (time.time() - startTime),
+                                                                        data=(update.message.chat_id, user.id, context, "TIMES UP!"))
+        await game3_next_question(update, context)
+
+
+async def game3_end_job(context: ContextTypes.DEFAULT_TYPE):
+    chat_id, user_id, context, end_text = context.job.data
+    score = context.user_data.get('game3_score', 0)
+    attempted = context.user_data.get('game3_attempted', 0)
+    start_time = context.user_data.get('game3_start_time', time.time())
+    context.user_data.clear()
+    user_data = users_collection.find_one({'user_id': user_id})
+    if 'mathpy' in user_data:
+        high_score = user_data['mathpy']
+    else:
+        high_score = 0
+    high_score = max(high_score, score)
+    await context.bot.send_message(chat_id=chat_id, text=end_text)
+    await context.bot.send_message(chat_id=chat_id, text=f"Your score is {score}. Your high score: {high_score}")
+    game_data = {
+        'user_id': user_id,
+        'score': score,
+        'attempted': attempted,
+        'duration': time.time()-start_time,
+        'timestamp': datetime.now(),
+        'game': 'mathpy',
+    }
+    games_collection.insert_one(game_data)
+    users_collection.update_one({'user_id': user_id}, {'$set': {'mathpy': high_score}})
 
 
 @restricted
@@ -448,12 +625,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await math24_answer(update, context)
     elif 'current_sum' in context.user_data and context.user_data.get('game2_active', False):
         await sums_answer(update, context)
+    elif context.user_data.get('game3_active', False):
+        await game3_answer(update, context)
 
 
 async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     games = {
-        "sums": "Sums in a minute",
         "math24": "Math 24",
+        "sums": "Sums in a minute",
+        "mathpy": "Math py",
     }  # Add all game names here
     leaderboard_text = "*Game Leaderboard*\n\n"
 
@@ -529,6 +709,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("answer", answer))
     application.add_handler(CommandHandler("game1", math24_start))
     application.add_handler(CommandHandler("game2", sums_start))
+    application.add_handler(CommandHandler("game3", game3_start))
     application.add_handler(CommandHandler("points", check_points))
     application.add_handler(CommandHandler("leaderboard", game_leaderboard))
     application.add_handler(CommandHandler("cancel", cancel))
@@ -537,7 +718,7 @@ if __name__ == '__main__':
 
     # Scheduler for announcements
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Singapore'))
-    scheduler.add_job(announce_new_problem, 'cron', day_of_week='mon', hour=20, minute=10)
+    scheduler.add_job(announce_new_problem, 'cron', day_of_week='mon', hour=20, minute=0)
     # scheduler.add_job(announce, 'date', run_date=datetime(2024, 7, 22, 20, 13))
     scheduler.start()
 
