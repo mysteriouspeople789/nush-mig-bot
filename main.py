@@ -122,9 +122,10 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         number = context.args[0].strip()
         current_problem = problems_collection.find_one({'_id': 'current_problem'})
 
-        users_collection.update_one({'user_id': user_id}, {'$set': {'latest_answer': number}}, upsert=True)
+        users_collection.update_one({'user_id': user.id}, {'$set': {'latest_answer': number}}, upsert=True)
 
-        await update.message.reply_text(f"Your answer {number} has been saved. If you would like to change your answer, call the /answer command again.")
+        await update.message.reply_text(
+            f"Your answer {number} has been saved. If you would like to change your answer, call the /answer command again.")
     else:
         await update.message.reply_text("Please provide an answer after the command. Example: /answer 42")
 
@@ -142,6 +143,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, sendConfirm
         if sendConfirmation:
             await update.message.reply_text("Game cancelled!")
         context.user_data.clear()
+
 
 # Questions code
 async def notify_users():
@@ -163,10 +165,11 @@ async def notify_users():
         message = f"Your new score is {user['points']}."
         await bot.send_message(chat_id=user_id, text=message)
 
+
 async def announce_new_problem():
     chat_id = os.environ['CHAT_ID']
     problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
-    correct_answer = 50 # In the future change this based on difficulty as planned
+    correct_answer = 50  # In the future change this based on difficulty as planned
 
     if problem_number > 0:
         await notify_users()
@@ -196,9 +199,10 @@ async def announce_new_problem():
     # Reset all answers to 0
     users_collection.update_many(
         {'latest_answer': {'$ne': None}},
-        {'$set': {'latest_answer' : None}},
+        {'$set': {'latest_answer': None}},
         upsert=True
     )
+
 
 # End of questions code
 
@@ -208,6 +212,7 @@ def evaluate_expression(expr):
         return eval(expr)
     except ZeroDivisionError:
         return None
+
 
 def generate_all_expressions(nums):
     operators = ['+', '-', '*', '/']
@@ -227,12 +232,14 @@ def generate_all_expressions(nums):
 
     return expressions
 
+
 def find_solution(nums):
     all_expressions = generate_all_expressions(nums)
     for expr in all_expressions:
         if not evaluate_expression(expr) is None and round(evaluate_expression(expr), 5) == 24:
             return expr
     return "-1"
+
 
 async def send_next_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'correct_count' not in context.user_data or not context.user_data.get('game_active', False):
@@ -253,6 +260,7 @@ async def send_next_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"{number1} {number2} {number3} {number4}")
 
+
 def is_valid_user_expression(user_expr, nums):
     try:
         if not re.match(r'^[\d+\-*/()\s]+$', user_expr) or '**' in user_expr or '//' in user_expr:
@@ -270,6 +278,7 @@ def is_valid_user_expression(user_expr, nums):
         return True
     except:
         return False
+
 
 async def game_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_answer = update.message.text.strip()
@@ -289,6 +298,7 @@ async def game_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_next_number(update, context)
 
+
 async def game_end_job(context: ContextTypes.DEFAULT_TYPE):
     chat_id, user_id, context = context.job.data
     correct_count = context.user_data.get('correct_count', 0)
@@ -306,9 +316,9 @@ async def game_end_job(context: ContextTypes.DEFAULT_TYPE):
     # Reset user data
     context.user_data.clear()
 
+
 @restricted
 async def game_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     user = update.message.from_user
     user_data = users_collection.find_one({'user_id': user.id})
     if user_data is None:
@@ -319,14 +329,14 @@ async def game_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['game_active'] = True
     context.user_data['correct_count'] = 0
     context.user_data['game_end_job'] = context.job_queue.run_once(game_end_job, when=60,
-                                                                    data=(update.message.chat_id, user.id, context))
+                                                                   data=(update.message.chat_id, user.id, context))
     await update.message.reply_text(f"Use the following 4 numbers and the 4 operations (+, -, *, /) with brackets to "
                                     f"achieve the number 24! You may use the numbers in any order. If you think there "
                                     f"is no solution, answer -1.\nAnswer as many as you can in 1 minute!")
     await send_next_number(update, context)
 
-async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Probably should improve this code to do away with code duplication
     # Print month leaderboard
     leaderboard_text = "*Month Leaderboard*\n\n"
@@ -376,7 +386,7 @@ async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if last_score is None or user_points != last_score:
             rank = current_rank
- 
+
         if display_count < 5 or (user_points == last_score):
             leaderboard_text += f"{rank}. {user_name} - {user_points} points\n"
             display_count += 1
@@ -388,7 +398,9 @@ async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(leaderboard_text, parse_mode='markdown')
 
+
 async def end_ongoing_game():
+    chat_id = os.environ['CHAT_ID']
     top_users = list(users_collection.sort([("month_points", -1)]))
     if not top_users:
         return
@@ -399,10 +411,14 @@ async def end_ongoing_game():
         user_id = user['user_id']
         user_month_points = user["month_points"]
 
-        users_collection.update_one({'user_id': user_id}, {'$inc': {'points': 200 * user_month_points / higest_month_points}})
+        users_collection.update_one({'user_id': user_id},
+                                    {'$inc': {'points': 200 * user_month_points / highest_month_points}})
         users_collection.update_one({'user_id': user_id}, {'$set': {'month_points': 0}})
 
-    await update.message.reply_text('The ongoing game has ended. Check your scores with /leaderboard and /points now!', parse_mode='markdown')
+    message = 'The ongoing game has ended. Check your scores with /leaderboard and /points now!'
+    await bot.send_message(chat_id=chat_id, text=message, parse_mode='markdown')
+
+
 # End of game code
 
 @restricted
@@ -438,7 +454,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('game_active', False):
         await game_answer(update, context)
-    
+
 
 async def announce():
     chat_id = os.environ['CHAT_ID']
@@ -463,7 +479,6 @@ async def announce():
     #     os.remove(pdf_path)
     # await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
     # os.remove(image_path)
-
 
 
 # Main function
