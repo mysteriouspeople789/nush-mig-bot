@@ -196,15 +196,16 @@ async def notify_users():
 async def announce_new_problem():
     chat_id = os.environ['CHAT_ID']
     problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
+    correct_answer = problems_collection.find_one({'problem': problem_number})['answer']
 
     if problem_number > 0:
         await notify_users()
 
-    text_message = '''The answer for the second MIG Amazing Challenge was *8987726770*, and the solution is below. Here comes the third MIG Amazing Challenge!'''
+    text_message = f'''The answer for this last MIG Amazing Challenge was *{correct_answer}*, and the solution is below. Here comes the next MIG Amazing Challenge!'''
     # Download the image from Cloudflare R2
     image_path = f"Problem {problem_number + 1}.jpg"
     # print("img path:", f"Problem {problem_number + 1}.jpg", ";", image_path)
-    s3_client.download_file("mig-telegram", image_path, image_path)
+    # s3_client.download_file("mig-telegram", image_path, image_path)
 
     if problem_number > 0:
         # Download the PDF from Cloudflare R2
@@ -215,8 +216,8 @@ async def announce_new_problem():
     if problem_number > 0:
         await bot.send_document(chat_id=chat_id, document=open(pdf_path, 'rb'))
         os.remove(pdf_path)
-    await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
-    os.remove(image_path)
+    # await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
+    # os.remove(image_path)
 
     problems_collection.update_one({'_id': 'current_problem'}, {'$inc': {'number': 1}})
 
@@ -298,7 +299,6 @@ async def send_next_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'correct_count' not in context.user_data or not context.user_data.get('game1_active', False):
         return
 
-    # Generate two random numbers and their sum
     number1 = random.randrange(1, 10)
     number2 = random.randrange(1, 10)
     number3 = random.randrange(1, 10)
@@ -718,7 +718,7 @@ if __name__ == '__main__':
 
     # Scheduler for announcements
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Singapore'))
-    scheduler.add_job(announce_new_problem, 'cron', day_of_week='mon', hour=20, minute=0)
+    scheduler.add_job(announce_new_problem, 'cron', day_of_week='sun', hour=17, minute=2)
     # scheduler.add_job(announce, 'date', run_date=datetime(2024, 7, 22, 20, 13))
     scheduler.start()
 
