@@ -15,7 +15,6 @@ from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHan
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import os
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timedelta
 import pytz
 import boto3
@@ -75,6 +74,17 @@ def restricted(func):
 
     return wrapped
 
+def restricted_admin(func):
+    """Decorator to restrict access to administrators."""
+
+    async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user_id = update.effective_user.id
+        try:
+            chat_member = await context.bot.get_chat_member(chat_id=os.environ['CHAT_ID'], user_id=user_id)
+            if chat_member.status in ['administrator', 'creator']:
+                return await func(update, context, *args, **kwargs)
+
+    return wrapped
 
 # Handlers
 @restricted
@@ -165,7 +175,7 @@ async def notify_users():
         message = f"Your new score is {user['points']}."
         await bot.send_message(chat_id=user_id, text=message)
 
-
+@restricted_admin
 async def announce_new_problem():
     chat_id = os.environ['CHAT_ID']
     problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
@@ -398,7 +408,7 @@ async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(leaderboard_text, parse_mode='markdown')
 
-
+@restricted_admin
 async def end_ongoing_game():
     chat_id = os.environ['CHAT_ID']
     top_users = list(users_collection.sort([("month_points", -1)]))
@@ -501,13 +511,8 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("leaderboard", game_leaderboard))
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("endgame", end_ongoing_game))
+    application.add_handler(CommandHandler("announce", announce_new_problem))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    # Scheduler for announcements
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Singapore'))
-    scheduler.add_job(announce_new_problem, 'cron', day_of_week='mon', hour=20, minute=0)
-    scheduler.add_job(end_ongoing_game, 'interval', months=1)
-    # scheduler.add_job(announce, 'date', run_date=datetime(2024, 7, 22, 20, 13))
-    scheduler.start()
 
     application.run_polling()
