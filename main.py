@@ -15,7 +15,6 @@ from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHan
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import os
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timedelta
 import pytz
 import boto3
@@ -75,6 +74,17 @@ def restricted(func):
 
     return wrapped
 
+def restricted_admin(func):
+    """Decorator to restrict access to administrators."""
+
+    async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user_id = update.effective_user.id
+        try:
+            chat_member = await context.bot.get_chat_member(chat_id=os.environ['CHAT_ID'], user_id=user_id)
+            if chat_member.status in ['administrator', 'creator']:
+                return await func(update, context, *args, **kwargs)
+
+    return wrapped
 
 # Handlers
 @restricted
@@ -102,32 +112,45 @@ async def clas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'name': context.user_data['name'],
         'class': update.message.text,
         'points': 0.0,
-        'month_points': 0
+        'month_points': 0,
+        'pubs_answers': [None for i in range(10)],
+        'training_answer': None
     }
     users_collection.insert_one(user_data)
     await update.message.reply_text("Done! You may use /help to view all available commands and get started.")
     return ConversationHandler.END
 
-
 @restricted
-async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def answer_pubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     user_data = users_collection.find_one({'user_id': user.id})
-    if user_data is None:
-        await update.message.reply_text(
-            "Please use the /start command to enter your name and class before using this command.")
-        return
 
-    if context.args:
-        number = context.args[0].strip()
-        current_problem = problems_collection.find_one({'_id': 'current_problem'})
-
-        users_collection.update_one({'user_id': user.id}, {'$set': {'latest_answer': number}}, upsert=True)
+    if context.args and len(args) == 2:
+        qn_number = int(context.args[0].strip())
+        answer = int(context.args[1].strip())
+        user_data = users_collection.find_one({'user_id': user.id})
+        answers = user_data['pubs_answers']
+        answers[qn_number - 1] = answer
+        users_collection.update_one({'user_id': user.id}, {'$set': {'pubs_answers': answers}})
 
         await update.message.reply_text(
-            f"Your answer {number} has been saved. If you would like to change your answer, call the /answer command again.")
+            f"Your answer {answer} for question {qn_number} has been saved. If you would like to change your answer, call the /answerpubs command again.")
     else:
-        await update.message.reply_text("Please provide an answer after the command. Example: /answer 42")
+        await update.message.reply_text("Please provide a question number and an answer after the command. Example: /answerpubs 1 42")
+
+@restricted
+async def answer_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    user_data = users_collection.find_one({'user_id': user.id})
+
+    if context.args and len(args) == 1:
+        answer = int(context.args[0].strip())
+        users_collection.update_one({'user_id': user.id}, {'$set': {'training_answer': answer}})
+
+        await update.message.reply_text(
+            f"Your answer {answer} has been saved. If you would like to change your answer, call the /answertraining command again.")
+    else:
+        await update.message.reply_text("Please provide an answer after the command. Example: /answertraining 42")
 
 
 async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,35 +169,40 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, sendConfirm
 
 
 # Questions code
-async def notify_users():
+async def notify_users_pubs():
     problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
 
     # Get the correct answer for the previous problem
-    correct_answer = problems_collection.find_one({'problem': problem_number})['answer']
-    problem_points = problems_collection.find_one({'problem': problem_number})['points']
+    correct_answer = str(problems_collection.find_one({'problem': problem_number})['answer']).split()
+    problem_points = 10
 
     if correct_answer is None:
         return  # No correct answer for the previous problem
 
     # Notify each user who submitted an answer
-    users = users_collection.find({'latest_answer': {'$ne': None}})
+    users = users_collection.find({'pubs_answers': {'$ne': [None for i in range(10)]}})
     for user in users:
         user_id = user['user_id']
-        if user.get('latest_answer') == correct_answer:
-            users_collection.update_one({'user_id': user_id}, {'$inc': {'points': problem_points}})
-        message = f"Your new score is {user['points']}."
+        answers = user['pubs_answers']
+        for i in range(10):
+            if answers[i] == correct_answer[i]:
+                users_collection.update_one({'user_id': user_id}, {'$inc': {'points': problem_points}})
+
+            users_collection.update_one({'user_id': user_id}, {'$set': {'pubs_answers': [None for i in range(10)]}})
+
+        message = f"The previous MIG Pubs Question Set is over. Your new score is {user['points']}."
         await bot.send_message(chat_id=user_id, text=message)
 
-
-async def announce_new_problem():
+@restricted_admin
+async def announce_new_pubs_problem():
     chat_id = os.environ['CHAT_ID']
     problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
-    correct_answer = 50  # In the future change this based on difficulty as planned
 
     if problem_number > 0:
-        await notify_users()
+        await notify_users_pubs()
 
-    text_message = f'''The answer for the previous MIG Question was *{correct_answer}*, and the solution is below. Here comes the next MIG Question!'''
+    text_message = f'''The new MIG Pubs problem set is out! See the image for the questions!'''
+    text_message += f'''The answers for the previous MIG Pubs Question Set (if any) are in the PDF below.'''
 
     # Download the image from Cloudflare R2
     image_path = f"Problem {problem_number + 1}.jpg"
@@ -196,13 +224,64 @@ async def announce_new_problem():
 
     problems_collection.update_one({'_id': 'current_problem'}, {'$inc': {'number': 1}})
 
-    # Reset all answers to 0
-    users_collection.update_many(
-        {'latest_answer': {'$ne': None}},
-        {'$set': {'latest_answer': None}},
-        upsert=True
-    )
+# Questions code
+async def notify_users_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
 
+    # Get the correct answer for the previous problem
+    correct_answer = problems_collection.find_one({'problem': problem_number})['answer']
+    problem_points = int(context.args[0].strip())
+
+    if correct_answer is None:
+        return  # No correct answer for the previous problem
+
+    # Notify each user who submitted an answer
+    users = users_collection.find({'training_answer': {'$ne': None}})
+    for user in users:
+        user_id = user['user_id']
+        answer = user['training_answer']
+        if answer == correct_answer:
+            users_collection.update_one({'user_id': user_id}, {'$inc': {'points': problem_points}})
+
+        users_collection.update_one({'user_id': user_id}, {'$set': {'training_answer': None}})
+
+        message = f"The previous MIG Training Question is over. Your new score is {user['points']}."
+        await bot.send_message(chat_id=user_id, text=message)
+
+@restricted_admin
+async def announce_new_training_problem(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = os.environ['CHAT_ID']
+    problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
+
+    if problem_number > 0:
+        if !context.args:
+            await update.message.reply_text("Please also input the number of points awarded for the previous question set. ie, /announcetraining 70")
+            return
+
+        await notify_users_training(update, context)
+
+    text_message = f'''The new MIG Training Question is out! See the image for the question!'''
+    text_message += f'''The answer for the previous MIG Training Question (if any) is in the PDF below.'''
+
+    # Download the image from Cloudflare R2
+    image_path = f"Problem {problem_number + 1}.jpg"
+    # print("img path:", f"Problem {problem_number + 1}.jpg", ";", image_path)
+    # s3_client.download_file("mig-telegram", image_path, image_path)
+
+    if problem_number > 0:
+        # Download the PDF from Cloudflare R2
+        pdf_path = f"Problem {problem_number}.pdf"
+        s3_client.download_file("mig-telegram", pdf_path, pdf_path)
+
+    await bot.send_message(chat_id=chat_id, text=text_message, parse_mode='markdown')
+    if problem_number > 0:
+        await bot.send_document(chat_id=chat_id, document=open(pdf_path, 'rb'))
+        os.remove(pdf_path)
+
+    # await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
+    # os.remove(image_path)
+
+    problems_collection.update_one({'_id': 'current_problem'}, {'$inc': {'number': 1}})
 
 # End of questions code
 
@@ -398,7 +477,7 @@ async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(leaderboard_text, parse_mode='markdown')
 
-
+@restricted_admin
 async def end_ongoing_game():
     chat_id = os.environ['CHAT_ID']
     top_users = list(users_collection.sort([("month_points", -1)]))
@@ -441,7 +520,8 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "/start - Register your name and class\n"
-        "/answer [number] - Submit your answer for the current problem\n"
+        "/answertraining [answer] - Submit your answer for the current training problem\n"
+        "/answerpubs [qn number] [answer] - Submit your answer for the current pubs problem set"
         "/game - Play the monthly game\n"
         "/points - Check your current points\n"
         "/leaderboard - Display game leaderboard\n"
@@ -495,19 +575,16 @@ if __name__ == '__main__':
     )
 
     application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("answer", answer))
+    application.add_handler(CommandHandler("answertraining", answer_training))
+    application.add_handler(CommandHandler("answerpubs", answer_pubs))
     application.add_handler(CommandHandler("game", game_start))
     application.add_handler(CommandHandler("points", check_points))
     application.add_handler(CommandHandler("leaderboard", game_leaderboard))
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("endgame", end_ongoing_game))
+    application.add_handler(CommandHandler("announcetraining", announce_new_training_problem))
+    application.add_handler(CommandHandler("announcepubs", announce_new_pubs_problem))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    # Scheduler for announcements
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Singapore'))
-    scheduler.add_job(announce_new_problem, 'cron', day_of_week='mon', hour=20, minute=0)
-    scheduler.add_job(end_ongoing_game, 'interval', months=1)
-    # scheduler.add_job(announce, 'date', run_date=datetime(2024, 7, 22, 20, 13))
-    scheduler.start()
 
     application.run_polling()
