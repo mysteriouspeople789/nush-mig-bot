@@ -195,7 +195,7 @@ async def notify_users_pubs():
             users_collection.update_one({'user_id': user_id}, {'$set': {'pubs_answers': [None for i in range(10)]}})
 
         message = f"The previous MIG Pubs Question Set is over. Your new score is {user['points']}."
-        await bot.send_message(chat_id=user_id, text=message)
+        await bot.send_message(chat_id=chat_id, text=message)
 
 @restricted_admin
 async def announce_new_pubs_problem():
@@ -250,7 +250,7 @@ async def notify_users_training(update: Update, context: ContextTypes.DEFAULT_TY
         users_collection.update_one({'user_id': user_id}, {'$set': {'training_answer': None}})
 
         message = f"The previous MIG Training Question is over. Your new score is {user['points']}."
-        await bot.send_message(chat_id=user_id, text=message)
+        await bot.send_message(chat_id=chat_id, text=message)
 
 @restricted_admin
 async def announce_new_training_problem(update: Update, context: ContextTypes.DEFAULT_TYPE):
