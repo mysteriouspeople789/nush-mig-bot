@@ -83,6 +83,10 @@ def restricted_admin(func):
             chat_member = await context.bot.get_chat_member(chat_id=os.environ['CHAT_ID'], user_id=user_id)
             if chat_member.status in ['administrator', 'creator']:
                 return await func(update, context, *args, **kwargs)
+            else:
+                return None
+        except Exception as e:
+            return None
 
     return wrapped
 
@@ -125,7 +129,7 @@ async def answer_pubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     user_data = users_collection.find_one({'user_id': user.id})
 
-    if context.args and len(args) == 2:
+    if context.args and len(context.args) == 2:
         qn_number = int(context.args[0].strip())
         answer = int(context.args[1].strip())
         user_data = users_collection.find_one({'user_id': user.id})
@@ -143,7 +147,7 @@ async def answer_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     user_data = users_collection.find_one({'user_id': user.id})
 
-    if context.args and len(args) == 1:
+    if context.args and len(context.args) == 1:
         answer = int(context.args[0].strip())
         users_collection.update_one({'user_id': user.id}, {'$set': {'training_answer': answer}})
 
@@ -252,9 +256,10 @@ async def notify_users_training(update: Update, context: ContextTypes.DEFAULT_TY
 async def announce_new_training_problem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = os.environ['CHAT_ID']
     problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
+    print("problem number", problem_number)
 
     if problem_number > 0:
-        if !context.args:
+        if len(context.args) == 0:
             await update.message.reply_text("Please also input the number of points awarded for the previous question set. ie, /announcetraining 70")
             return
 
@@ -398,6 +403,7 @@ async def game_end_job(context: ContextTypes.DEFAULT_TYPE):
 
 @restricted
 async def game_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("aaa", update.message.chat_id)
     user = update.message.from_user
     user_data = users_collection.find_one({'user_id': user.id})
     if user_data is None:
