@@ -133,9 +133,9 @@ async def answer_pubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         qn_number = int(context.args[0].strip())
         answer = int(context.args[1].strip())
         user_data = users_collection.find_one({'user_id': user.id})
-        answers = user_data['pubs_answers']
+        answers = user_data.get("pubs_answers", [None for i in range(10)])
         answers[qn_number - 1] = answer
-        users_collection.update_one({'user_id': user.id}, {'$set': {'pubs_answers': answers}})
+        users_collection.update_one({'user_id': user.id}, {'$set': {'pubs_answers': answers}}, upsert=True)
 
         await update.message.reply_text(
             f"Your answer {answer} for question {qn_number} has been saved. If you would like to change your answer, call the /answerpubs command again.")
@@ -149,7 +149,7 @@ async def answer_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if context.args and len(context.args) == 1:
         answer = int(context.args[0].strip())
-        users_collection.update_one({'user_id': user.id}, {'$set': {'training_answer': answer}})
+        users_collection.update_one({'user_id': user.id}, {'$set': {'training_answer': answer}}, upsert=True)
 
         await update.message.reply_text(
             f"Your answer {answer} has been saved. If you would like to change your answer, call the /answertraining command again.")
@@ -184,7 +184,7 @@ async def notify_users_pubs():
         return  # No correct answer for the previous problem
 
     # Notify each user who submitted an answer
-    users = users_collection.find({'pubs_answers': {'$ne': [None for i in range(10)]}})
+    users = users_collection.find({'pubs_answers': {'$exists': True}}).find({'pubs_answers': {'$ne': [None for i in range(10)]}})
     for user in users:
         user_id = user['user_id']
         answers = user['pubs_answers']
@@ -195,7 +195,7 @@ async def notify_users_pubs():
             users_collection.update_one({'user_id': user_id}, {'$set': {'pubs_answers': [None for i in range(10)]}})
 
         message = f"The previous MIG Pubs Question Set is over. Your new score is {user['points']}."
-        await bot.send_message(chat_id=chat_id, text=message)
+        await bot.send_message(chat_id=user_id, text=message)
 
 @restricted_admin
 async def announce_new_pubs_problem():
@@ -240,7 +240,7 @@ async def notify_users_training(update: Update, context: ContextTypes.DEFAULT_TY
         return  # No correct answer for the previous problem
 
     # Notify each user who submitted an answer
-    users = users_collection.find({'training_answer': {'$ne': None}})
+    users = users_collection.find({'training_answer': {'$exists': True}}).find({'training_answer': {'$ne': None}})
     for user in users:
         user_id = user['user_id']
         answer = user['training_answer']
@@ -250,7 +250,7 @@ async def notify_users_training(update: Update, context: ContextTypes.DEFAULT_TY
         users_collection.update_one({'user_id': user_id}, {'$set': {'training_answer': None}})
 
         message = f"The previous MIG Training Question is over. Your new score is {user['points']}."
-        await bot.send_message(chat_id=chat_id, text=message)
+        await bot.send_message(chat_id=user_id, text=message)
 
 @restricted_admin
 async def announce_new_training_problem(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -387,7 +387,8 @@ async def game_end_job(context: ContextTypes.DEFAULT_TYPE):
     chat_id, user_id, context = context.job.data
     correct_count = context.user_data.get('correct_count', 0)
     user_data = users_collection.find_one({'user_id': user_id})
-    high_score = max(user_data['month_points'], correct_count)
+    curr_score = user_data.get("month_points", correct_count)
+    high_score = max(curr_score, correct_count)
     await context.bot.send_message(chat_id=chat_id,
                                    text=f"Game over! You got {correct_count} correct answers. Your high score: {high_score}")
     game_data = {
@@ -396,7 +397,7 @@ async def game_end_job(context: ContextTypes.DEFAULT_TYPE):
         'timestamp': datetime.now(),
     }
     games_collection.insert_one(game_data)
-    users_collection.update_one({'user_id': user_id}, {'$set': {'month_points': high_score}})
+    users_collection.update_one({'user_id': user_id}, {'$set': {'month_points': high_score}}, upsert=True)
     # Reset user data
     context.user_data.clear()
 
@@ -425,7 +426,7 @@ async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Probably should improve this code to do away with code duplication
     # Print month leaderboard
     leaderboard_text = "*Month Leaderboard*\n\n"
-    top_users = list(users_collection.sort([("month_points", -1)]))
+    top_users = list(users_collection.find({"month_points": {'$exists': True}}).sort([("month_points", -1)]))
     if not top_users:
         leaderboard_text += "\nNo users have points yet this month.\n\n"
     else:
@@ -486,7 +487,7 @@ async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @restricted_admin
 async def end_ongoing_game():
     chat_id = os.environ['CHAT_ID']
-    top_users = list(users_collection.sort([("month_points", -1)]))
+    top_users = list(users_collection.find({"month_points": {'$exists': True}}).sort([("month_points", -1)]))
     if not top_users:
         return
 
@@ -515,7 +516,10 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Please use the /start command to enter your name and class before using this command.")
         return
 
-    user_month_points = user_data['month_points']
+    user_month_points = user_data.get("month_points", 0)
+    users_collection.update_one({'user_id': user.id},
+                                {'$set': {'month_points': user_month_points}}, upsert=True)
+
     user_points = user_data['points']
 
     await update.message.reply_text(f"You have {user_month_points} points this month.")
