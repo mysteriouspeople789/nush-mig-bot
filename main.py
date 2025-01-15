@@ -148,7 +148,7 @@ async def answer_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = users_collection.find_one({'user_id': user.id})
 
     if context.args and len(context.args) == 1:
-        answer = int(context.args[0].strip())
+        answer = context.args[0].strip()
         users_collection.update_one({'user_id': user.id}, {'$set': {'training_answer': answer}}, upsert=True)
 
         await update.message.reply_text(
