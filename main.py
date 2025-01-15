@@ -174,33 +174,35 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, sendConfirm
 
 # Questions code
 async def notify_users_pubs():
-    problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
+    problem_number = problems_collection.find_one({'_id': 'current_pubs_problem'})['number']
 
     # Get the correct answer for the previous problem
-    correct_answer = str(problems_collection.find_one({'problem': problem_number})['answer']).split()
+    correct_answer = str(problems_collection.find_one({'pubs_problem': problem_number})['answer']).split()
     problem_points = 10
 
     if correct_answer is None:
         return  # No correct answer for the previous problem
 
     # Notify each user who submitted an answer
-    users = users_collection.find({'pubs_answers': {'$exists': True}}).find({'pubs_answers': {'$ne': [None for i in range(10)]}})
+    users = users_collection.find({'pubs_answers': {'$exists': True}})
     for user in users:
         user_id = user['user_id']
         answers = user['pubs_answers']
+        points = user['points']
         for i in range(10):
             if answers[i] == correct_answer[i]:
                 users_collection.update_one({'user_id': user_id}, {'$inc': {'points': problem_points}})
+                points = points + problem_points
 
             users_collection.update_one({'user_id': user_id}, {'$set': {'pubs_answers': [None for i in range(10)]}})
 
-        message = f"The previous MIG Pubs Question Set is over. Your new score is {user['points']}."
+        message = f"The previous MIG Pubs Question Set is over. Your new score is {points}."
         await bot.send_message(chat_id=user_id, text=message)
 
 @restricted_admin
-async def announce_new_pubs_problem():
+async def announce_new_pubs_problem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = os.environ['CHAT_ID']
-    problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
+    problem_number = problems_collection.find_one({'_id': 'current_pubs_problem'})['number']
 
     if problem_number > 0:
         await notify_users_pubs()
@@ -209,13 +211,13 @@ async def announce_new_pubs_problem():
     text_message += f'''The answers for the previous MIG Pubs Question Set (if any) are in the PDF below.'''
 
     # Download the image from Cloudflare R2
-    image_path = f"Problem {problem_number + 1}.jpg"
+    image_path = f"Pubs Problem {problem_number + 1}.jpg"
     # print("img path:", f"Problem {problem_number + 1}.jpg", ";", image_path)
-    # s3_client.download_file("mig-telegram", image_path, image_path)
+    s3_client.download_file("mig-telegram", image_path, image_path)
 
     if problem_number > 0:
         # Download the PDF from Cloudflare R2
-        pdf_path = f"Problem {problem_number}.pdf"
+        pdf_path = f"Pubs Problem {problem_number}.pdf"
         s3_client.download_file("mig-telegram", pdf_path, pdf_path)
 
     await bot.send_message(chat_id=chat_id, text=text_message, parse_mode='markdown')
@@ -223,40 +225,41 @@ async def announce_new_pubs_problem():
         await bot.send_document(chat_id=chat_id, document=open(pdf_path, 'rb'))
         os.remove(pdf_path)
 
-    # await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
-    # os.remove(image_path)
+    await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
+    os.remove(image_path)
 
-    problems_collection.update_one({'_id': 'current_problem'}, {'$inc': {'number': 1}})
+    problems_collection.update_one({'_id': 'current_pubs_problem'}, {'$inc': {'number': 1}})
 
 # Questions code
 async def notify_users_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
+    problem_number = problems_collection.find_one({'_id': 'current_training_problem'})['number']
 
     # Get the correct answer for the previous problem
-    correct_answer = problems_collection.find_one({'problem': problem_number})['answer']
+    correct_answer = problems_collection.find_one({'training_problem': problem_number})['answer']
     problem_points = int(context.args[0].strip())
 
     if correct_answer is None:
         return  # No correct answer for the previous problem
 
     # Notify each user who submitted an answer
-    users = users_collection.find({'training_answer': {'$exists': True}}).find({'training_answer': {'$ne': None}})
+    users = users_collection.find({'training_answer': {'$exists': True}})
     for user in users:
         user_id = user['user_id']
         answer = user['training_answer']
+        points = user['points']
         if answer == correct_answer:
             users_collection.update_one({'user_id': user_id}, {'$inc': {'points': problem_points}})
+            points = points + problem_points
 
         users_collection.update_one({'user_id': user_id}, {'$set': {'training_answer': None}})
 
-        message = f"The previous MIG Training Question is over. Your new score is {user['points']}."
+        message = f"The previous MIG Training Question is over. Your new score is {points}."
         await bot.send_message(chat_id=user_id, text=message)
 
 @restricted_admin
 async def announce_new_training_problem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = os.environ['CHAT_ID']
-    problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
-    print("problem number", problem_number)
+    problem_number = problems_collection.find_one({'_id': 'current_training_problem'})['number']
 
     if problem_number > 0:
         if len(context.args) == 0:
@@ -269,13 +272,13 @@ async def announce_new_training_problem(update: Update, context: ContextTypes.DE
     text_message += f'''The answer for the previous MIG Training Question (if any) is in the PDF below.'''
 
     # Download the image from Cloudflare R2
-    image_path = f"Problem {problem_number + 1}.jpg"
+    image_path = f"Training Problem {problem_number + 1}.jpg"
     # print("img path:", f"Problem {problem_number + 1}.jpg", ";", image_path)
-    # s3_client.download_file("mig-telegram", image_path, image_path)
+    s3_client.download_file("mig-telegram", image_path, image_path)
 
     if problem_number > 0:
         # Download the PDF from Cloudflare R2
-        pdf_path = f"Problem {problem_number}.pdf"
+        pdf_path = f"Training Problem {problem_number}.pdf"
         s3_client.download_file("mig-telegram", pdf_path, pdf_path)
 
     await bot.send_message(chat_id=chat_id, text=text_message, parse_mode='markdown')
@@ -283,10 +286,10 @@ async def announce_new_training_problem(update: Update, context: ContextTypes.DE
         await bot.send_document(chat_id=chat_id, document=open(pdf_path, 'rb'))
         os.remove(pdf_path)
 
-    # await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
-    # os.remove(image_path)
+    await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
+    os.remove(image_path)
 
-    problems_collection.update_one({'_id': 'current_problem'}, {'$inc': {'number': 1}})
+    problems_collection.update_one({'_id': 'current_training_problem'}, {'$inc': {'number': 1}})
 
 # End of questions code
 
@@ -404,7 +407,6 @@ async def game_end_job(context: ContextTypes.DEFAULT_TYPE):
 
 @restricted
 async def game_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("aaa", update.message.chat_id)
     user = update.message.from_user
     user_data = users_collection.find_one({'user_id': user.id})
     if user_data is None:
@@ -454,8 +456,8 @@ async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leaderboard_text += "\n"
 
     # Print semester leaderboard
-    leaderboard_text = "*Semester Leaderboard (excludes the ongoing monthly game)*\n\n"
-    top_users = list(users_collection.sort([("points", -1)]))
+    leaderboard_text += "*Semester Leaderboard (excludes the ongoing monthly game)*\n\n"
+    top_users = list(users_collection.find({"points": {'$exists': True}}).sort([("points", -1)]))
     if not top_users:
         leaderboard_text += "\nNo users have points yet.\n\n"
     else:
@@ -485,13 +487,15 @@ async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(leaderboard_text, parse_mode='markdown')
 
 @restricted_admin
-async def end_ongoing_game():
+async def end_ongoing_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = os.environ['CHAT_ID']
     top_users = list(users_collection.find({"month_points": {'$exists': True}}).sort([("month_points", -1)]))
     if not top_users:
         return
 
     highest_month_points = top_users[0]["month_points"]
+    if highest_month_points == 0:
+        return
     for i, user in enumerate(top_users):
         user_name = user['name']
         user_id = user['user_id']
@@ -517,13 +521,11 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_month_points = user_data.get("month_points", 0)
-    users_collection.update_one({'user_id': user.id},
-                                {'$set': {'month_points': user_month_points}}, upsert=True)
-
     user_points = user_data['points']
+    message = f"You have {user_month_points} points this month.\n"
+    message += f"You currently have {user_points:.2f} points in total."
 
-    await update.message.reply_text(f"You have {user_month_points} points this month.")
-    await update.message.reply_text(f"You currently have {user_points:.2f} points in total.")
+    await update.message.reply_text(message)
 
 
 @restricted
@@ -548,28 +550,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def announce():
     chat_id = os.environ['CHAT_ID']
-    # problem_number = problems_collection.find_one({'_id': 'current_problem'})['number']
-
-    # if problem_number > 0:
-    #     await notify_users()
-
     text_message = "btw the bot handle is @nush_mig_bot"
-    # Download the image from Cloudflare R2
-    # image_path = f"Problem {problem_number + 1}.jpg"
-    # s3_client.download_file("mig-telegram", image_path, image_path)
-
-    # if problem_number > 0:
-    #     # Download the PDF from Cloudflare R2
-    #     pdf_path = f"Problem {problem_number}.pdf"
-    #     s3_client.download_file("mig-telegram", pdf_path, pdf_path)
-
     await bot.send_message(chat_id=chat_id, text=text_message)
-    # if problem_number > 0:
-    #     await bot.send_document(chat_id=chat_id, document=open(pdf_path, 'rb'))
-    #     os.remove(pdf_path)
-    # await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
-    # os.remove(image_path)
-
 
 # Main function
 if __name__ == '__main__':
