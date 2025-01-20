@@ -41,6 +41,23 @@ logging.basicConfig(
 # Define conversation states
 NAME, CLASS = range(2)
 
+# Define announcement states
+NEW_TYPE, ANNOUNCE_PREV, NEW_QN_LINK, NEW_ANS_LINK, NEW_ANS_TEXT, NEW_ANNOUNCEMENT_TEXT, WRITE_NEW_DATA = range(7)
+
+# Define question categories
+TRAINING = range(100, 102) # Offset by 100 as a workaround for the database being not cleared yet
+
+# Define type identity states
+CATEGORY, POINTS = range(2)
+
+# Define type categories and points
+type_identity = {'easy': [TRAINING, 30],
+                 'medium': [TRAINING, 50],
+                 'hard': [TRAINING, 70],
+                 'pubs': [PUBS, 10]}
+
+valid_types = list(type_identity.keys())
+
 # Database
 db = client.get_database('main')
 users_collection = db.get_collection('users')
@@ -48,15 +65,6 @@ problems_collection = db.get_collection('problems')
 games_collection = db.get_collection('games')
 
 bot = Bot(token=os.environ['BOT_TOKEN'])
-
-s3_client = boto3.client(
-    service_name="s3",
-    endpoint_url=f"https://{os.environ['ACCOUNT_ID']}.r2.cloudflarestorage.com",
-    aws_access_key_id=os.environ['ACCESS_KEY_ID'],
-    aws_secret_access_key=os.environ['SECRET_ACCESS_KEY'],
-    region_name="apac",
-)
-
 
 def restricted(func):
     """Decorator to restrict access to users who are in the specified group chat."""
@@ -91,6 +99,7 @@ def restricted_admin(func):
     return wrapped
 
 # Handlers
+
 @restricted
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -122,6 +131,10 @@ async def clas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     users_collection.insert_one(user_data)
     await update.message.reply_text("Done! You may use /help to view all available commands and get started.")
+    return ConversationHandler.END
+
+async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Operation cancelled.")
     return ConversationHandler.END
 
 @restricted
@@ -157,11 +170,6 @@ async def answer_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please provide an answer after the command. Example: /answertraining 42")
 
 
-async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Operation cancelled.")
-    return ConversationHandler.END
-
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, sendConfirmation=True):
     if context.user_data.get('game_active', False):
         job = context.user_data.get('game_end_job')
@@ -171,125 +179,115 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, sendConfirm
             await update.message.reply_text("Game cancelled!")
         context.user_data.clear()
 
+@restricted_admin
+async def announce_new_problem(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Hello! If you unintentionally wrote this command, type /cancel at any time to cancel the operation, and nothing will be saved.")
+    return NEW_TYPE
 
-# Questions code
-async def notify_users_pubs():
-    problem_number = problems_collection.find_one({'_id': 'current_pubs_problem'})['number']
+async def set_new_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    # Get the correct answer for the previous problem
-    correct_answer = str(problems_collection.find_one({'pubs_problem': problem_number})['answer']).split()
-    problem_points = 10
+    qn_data = {
+        '_id': TRAINING,
+        'type': 'easy'
+        'qn_link': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        'ans_link': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        'ans_text': ['69'],
+        'announcement_text': 'Hello MIG!'
+    }
 
-    if correct_answer is None:
-        return  # No correct answer for the previous problem
+    await update.message.reply_text(f"What type will the new question be? Acceptable types: {valid_types}")
+    return ANNOUNCE_PREV
+
+async def announce_prev(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if message not in valid_types:
+        await update.message.reply_text(f"Invalid type. Acceptable types: {valid_types}")
+        return ANNOUNCE_PREV
+
+    message = update.message.text
+    qn_type = message
+    context.qn_data['type'] = qn_type
+    qn_category = type_identity[message][CATEGORY]
+    context.qn_data['_id'] = qn_category
+
+    prev_problem = problems_collection.find_one({'_id': qn_type})
+    if prev_problem is None:
+        return NEW_QN_LINK
+
+    prev_answer = prev_problem['ans_text']
+    prev_category = type_identity[prev_problem['type']][CATEGORY]
+    prev_points = type_identity[prev_problem['type']][POINTS]
+    prev_category_string = 'pubs_answers' if prev_category == PUBS else 'training_answer'
+
+    if prev_answer is None:
+        return # No correct answer for the previous problem
 
     # Notify each user who submitted an answer
-    users = users_collection.find({'pubs_answers': {'$exists': True}})
+    users = users_collection.find({prev_category_string: {'$exists': True}})
     for user in users:
         user_id = user['user_id']
-        answers = user['pubs_answers']
+        answer = user[prev_category_string]
         points = user['points']
-        for i in range(10):
-            if answers[i] == correct_answer[i]:
-                users_collection.update_one({'user_id': user_id}, {'$inc': {'points': problem_points}})
-                points = points + problem_points
+        message = ""
+        
+        if prev_category == PUBS:
+            for i in range(10):
+                if answer[i] == prev_answer[i]:
+                    users_collection.update_one({'user_id': user_id}, {'$inc': {'points': prev_points}})
+                    points += prev_points
 
-            users_collection.update_one({'user_id': user_id}, {'$set': {'pubs_answers': [None for i in range(10)]}})
+                users_collection.update_one({'user_id': user_id}, {'$unset': {'pubs_answers'}})
 
-        message = f"The previous MIG Pubs Question Set is over. Your new score is {points}."
+            message = f"The previous MIG Pubs Question Set is over. Your new score is {points}."
+
+        else if prev_category == TRAINING:
+            if answer == prev_answer[0]:
+                users_collection.update_one({'user_id': user_id}, {'$inc': {'points': prev_points}})
+                points += prev_points
+
+            users_collection.update_one({'user_id': user_id}, {'$unset': {'training_answer'}})   
+
+            message = f"The previous MIG Training Question is over. Your new score is {points}."
+
         await bot.send_message(chat_id=user_id, text=message)
 
-@restricted_admin
-async def announce_new_pubs_problem(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = os.environ['CHAT_ID']
-    problem_number = problems_collection.find_one({'_id': 'current_pubs_problem'})['number']
+    await update.message.reply_text("Enter the link for the new question.")
+    return NEW_QN_LINK
 
-    if problem_number > 0:
-        await notify_users_pubs()
+async def set_new_qn_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.qn_data["qn_link"] = update.message.text
+    await update.message.reply_text("Enter the link for the answers to the new question.")
+    return NEW_ANS_LINK
 
-    text_message = f'''The new MIG Pubs problem set is out! See the image for the questions!'''
-    text_message += f'''The answers for the previous MIG Pubs Question Set (if any) are in the PDF below.'''
+async def set_new_ans_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.qn_data["ans_link"] = update.message.text
+    await update.message.reply_text("Enter the answers to the new question, in a string separated by underscores. ie: 6_nine_42_zero")
+    return NEW_ANS_TEXT
 
-    # Download the image from Cloudflare R2
-    image_path = f"Pubs Problem {problem_number + 1}.jpg"
-    # print("img path:", f"Problem {problem_number + 1}.jpg", ";", image_path)
-    s3_client.download_file("mig-telegram", image_path, image_path)
+async def set_new_ans_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.qn_data["ans_text"] = update.message.text.split("_")
+    await update.message.reply_text("Enter the text you want to send as the announcement. The format in which the announcement will be made is as follows: \n\n<message>\n\nPrevious Answer Link: <link>\nNew Question Link: <link>")
+    return NEW_ANNOUNCEMENT_TEXT
 
-    if problem_number > 0:
-        # Download the PDF from Cloudflare R2
-        pdf_path = f"Pubs Problem {problem_number}.pdf"
-        s3_client.download_file("mig-telegram", pdf_path, pdf_path)
+async def set_new_announcement_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.qn_data["announcement_text"] = update.message.text
+    return WRITE_NEW_DATA
 
-    await bot.send_message(chat_id=chat_id, text=text_message, parse_mode='markdown')
-    if problem_number > 0:
-        await bot.send_document(chat_id=chat_id, document=open(pdf_path, 'rb'))
-        os.remove(pdf_path)
+async def write_new_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    problems_collection.update_one({'_id': context.qn_data["_id"]}, {'$set': {'type': context.qn_data['type']}}, upsert=True)
+    problems_collection.update_one({'_id': context.qn_data["_id"]}, {'$set': {'qn_link': context.qn_data['qn_link']}}, upsert=True)
+    problems_collection.update_one({'_id': context.qn_data["_id"]}, {'$set': {'ans_link': context.qn_data['ans_link']}}, upsert=True)
+    problems_collection.update_one({'_id': context.qn_data["_id"]}, {'$set': {'ans_text': context.qn_data['ans_text']}}, upsert=True)
 
-    await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
-    os.remove(image_path)
+    message = f"{context.qn_data["announcement_text"]}\n\n"
 
-    problems_collection.update_one({'_id': 'current_pubs_problem'}, {'$inc': {'number': 1}})
+    if prev_problem is not None:
+        message += f"Previous Answer Link: {context.prev_problem['ans_link']}\n"
 
-# Questions code
-async def notify_users_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    problem_number = problems_collection.find_one({'_id': 'current_training_problem'})['number']
+    message += f"New Question Link: {context.qn_data['qn_link']}"
 
-    # Get the correct answer for the previous problem
-    correct_answer = problems_collection.find_one({'training_problem': problem_number})['answer']
-    problem_points = int(context.args[0].strip())
-
-    if correct_answer is None:
-        return  # No correct answer for the previous problem
-
-    # Notify each user who submitted an answer
-    users = users_collection.find({'training_answer': {'$exists': True}})
-    for user in users:
-        user_id = user['user_id']
-        answer = user['training_answer']
-        points = user['points']
-        if answer == correct_answer:
-            users_collection.update_one({'user_id': user_id}, {'$inc': {'points': problem_points}})
-            points = points + problem_points
-
-        users_collection.update_one({'user_id': user_id}, {'$set': {'training_answer': None}})
-
-        message = f"The previous MIG Training Question is over. Your new score is {points}."
-        await bot.send_message(chat_id=user_id, text=message)
-
-@restricted_admin
-async def announce_new_training_problem(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = os.environ['CHAT_ID']
-    problem_number = problems_collection.find_one({'_id': 'current_training_problem'})['number']
-
-    if problem_number > 0:
-        if len(context.args) == 0:
-            await update.message.reply_text("Please also input the number of points awarded for the previous question set. ie, /announcetraining 70")
-            return
-
-        await notify_users_training(update, context)
-
-    text_message = f'''The new MIG Training Question is out! See the image for the question!'''
-    text_message += f'''The answer for the previous MIG Training Question (if any) is in the PDF below.'''
-
-    # Download the image from Cloudflare R2
-    image_path = f"Training Problem {problem_number + 1}.jpg"
-    # print("img path:", f"Problem {problem_number + 1}.jpg", ";", image_path)
-    s3_client.download_file("mig-telegram", image_path, image_path)
-
-    if problem_number > 0:
-        # Download the PDF from Cloudflare R2
-        pdf_path = f"Training Problem {problem_number}.pdf"
-        s3_client.download_file("mig-telegram", pdf_path, pdf_path)
-
-    await bot.send_message(chat_id=chat_id, text=text_message, parse_mode='markdown')
-    if problem_number > 0:
-        await bot.send_document(chat_id=chat_id, document=open(pdf_path, 'rb'))
-        os.remove(pdf_path)
-
-    await bot.send_photo(chat_id=chat_id, photo=open(image_path, 'rb'))
-    os.remove(image_path)
-
-    problems_collection.update_one({'_id': 'current_training_problem'}, {'$inc': {'number': 1}})
+    await update.message.reply_text(message)
+    return ConversationHandler.END
+    
 
 # End of questions code
 
@@ -557,7 +555,7 @@ async def announce():
 if __name__ == '__main__':
     application = ApplicationBuilder().token(os.environ['BOT_TOKEN']).build()
 
-    conv_handler = ConversationHandler(
+    conv_start_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name)],
@@ -566,7 +564,21 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler("cancel", cancel_conv)],
     )
 
-    application.add_handler(conv_handler)
+    announce_qn_handler = ConversationHandler(
+        entry_points=[CommandHandler("announce", announce_new_problem)],
+        states={
+            NEW_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_type)],
+            ANNOUNCE_PREV: [MessageHandler(filters.TEXT & ~filters.COMMAND, announce_prev)],
+            NEW_QN_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_qn_link)],
+            NEW_ANS_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_ans_link)],
+            NEW_ANS_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_ans_text)],
+            NEW_ANNOUNCEMENT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_announcement_text)],
+            WRITE_NEW_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, write_new_data)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_conv)],
+    )
+
+    application.add_handler(conv_start_handler)
     application.add_handler(CommandHandler("answertraining", answer_training))
     application.add_handler(CommandHandler("answerpubs", answer_pubs))
     application.add_handler(CommandHandler("game", game_start))
@@ -575,8 +587,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("endgame", end_ongoing_game))
-    application.add_handler(CommandHandler("announcetraining", announce_new_training_problem))
-    application.add_handler(CommandHandler("announcepubs", announce_new_pubs_problem))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     application.run_polling()
