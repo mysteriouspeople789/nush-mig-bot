@@ -180,10 +180,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, sendConfirm
         context.user_data.clear()
 
 @restricted_admin
-async def announce_new_problem(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hello! If you unintentionally wrote this command, type /cancel at any time to cancel the operation, and nothing will be saved.")
-    return NEW_TYPE
-
 async def set_new_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     qn_data = {
@@ -194,6 +190,7 @@ async def set_new_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'ans_text': ['69'],
         'announcement_text': 'Hello MIG!'
     }
+    await update.message.reply_text("Hello! If you unintentionally wrote this command, type /cancel at any time to cancel the operation, and nothing will be saved.")
 
     await update.message.reply_text(f"What type will the new question be? Acceptable types: {valid_types}")
     return ANNOUNCE_PREV
