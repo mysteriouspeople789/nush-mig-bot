@@ -192,7 +192,6 @@ async def set_new_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'ans_text': ['69'],
         'announcement_text': 'Hello MIG!'
     }
-    await update.message.reply_text("Hello! If you unintentionally wrote this command, type /cancel at any time to cancel the operation, and nothing will be saved.")
 
     await update.message.reply_text(f"What type will the new question be? Acceptable types: {valid_types}")
     return ANNOUNCE_PREV
