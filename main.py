@@ -501,7 +501,7 @@ async def end_ongoing_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         users_collection.update_one({'user_id': user_id},
                                     {'$inc': {'points': 200 * user_month_points / highest_month_points}})
-        users_collection.update_one({'user_id': user_id}, {'$set': {'month_points': 0}})
+        users_collection.update_one({'user_id': user_id}, {'$unset': {'month_points'}})
 
     message = 'The ongoing game has ended. Check your scores with /leaderboard and /points now!'
     await bot.send_message(chat_id=chat_id, text=message, parse_mode='markdown')
