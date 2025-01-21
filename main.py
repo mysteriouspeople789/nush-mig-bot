@@ -267,7 +267,7 @@ async def set_new_ans_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return NEW_ANS_TEXT
 
 async def set_new_ans_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["ans_text"] = update.message.text.split("_")
+    context.user_data["ans_text"] = list(update.message.text.split("_"))
     await update.message.reply_text("Enter the text you want to send as the announcement. The format in which the announcement will be made is as follows: \n\n<message>\n\nPrevious Answer Link: <link>\nNew Question Link: <link>")
     return NEW_ANNOUNCEMENT_TEXT
 
