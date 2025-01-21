@@ -286,7 +286,8 @@ async def set_new_announcement_text(update: Update, context: ContextTypes.DEFAUL
 
     message += f"New Question Link: {context.user_data['qn_link']}"
 
-    await bot.send_message(chat_id=os.environ['CHAT_ID'], text=message, parse_mode='markdown')
+    await bot.send_message(chat_id=os.environ['CHAT_ID'], text=message)
+
     return ConversationHandler.END
 
 # End of questions code
