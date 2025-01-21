@@ -45,7 +45,7 @@ NAME, CLASS = range(2)
 NEW_TYPE, ANNOUNCE_PREV, NEW_QN_LINK, NEW_ANS_LINK, NEW_ANS_TEXT, NEW_ANNOUNCEMENT_TEXT, WRITE_NEW_DATA = range(7)
 
 # Define question categories
-TRAINING = range(100, 102) # Offset by 100 as a workaround for the database being not cleared yet
+TRAINING, PUBS = range(100, 102) # Offset by 100 as a workaround for the database being not cleared yet
 
 # Define type identity states
 CATEGORY, POINTS = range(2)
@@ -188,7 +188,7 @@ async def set_new_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     qn_data = {
         '_id': TRAINING,
-        'type': 'easy'
+        'type': 'easy',
         'qn_link': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
         'ans_link': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
         'ans_text': ['69'],
@@ -199,27 +199,32 @@ async def set_new_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ANNOUNCE_PREV
 
 async def announce_prev(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message.text
     if message not in valid_types:
         await update.message.reply_text(f"Invalid type. Acceptable types: {valid_types}")
         return ANNOUNCE_PREV
 
-    message = update.message.text
     qn_type = message
-    context.qn_data['type'] = qn_type
+    context.user_data['type'] = qn_type
     qn_category = type_identity[message][CATEGORY]
-    context.qn_data['_id'] = qn_category
+    context.user_data['_id'] = qn_category
 
-    prev_problem = problems_collection.find_one({'_id': qn_type})
+    prev_problem = problems_collection.find_one({'_id': qn_category})
     if prev_problem is None:
+        await update.message.reply_text("Enter the link for the new question.")
         return NEW_QN_LINK
 
     prev_answer = prev_problem['ans_text']
     prev_category = type_identity[prev_problem['type']][CATEGORY]
     prev_points = type_identity[prev_problem['type']][POINTS]
     prev_category_string = 'pubs_answers' if prev_category == PUBS else 'training_answer'
+    prev_answer_link = prev_problem['ans_link']
+    context.user_data['prev_ans_link'] = prev_answer_link
 
     if prev_answer is None:
-        return # No correct answer for the previous problem
+        # no correct answer for prev problem
+        await update.message.reply_text("Enter the link for the new question.")
+        return NEW_QN_LINK
 
     # Notify each user who submitted an answer
     users = users_collection.find({prev_category_string: {'$exists': True}})
@@ -230,21 +235,21 @@ async def announce_prev(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = ""
         
         if prev_category == PUBS:
-            for i in range(10):
+            for i in range(min(len(answer), len(prev_answer))):
                 if answer[i] == prev_answer[i]:
                     users_collection.update_one({'user_id': user_id}, {'$inc': {'points': prev_points}})
                     points += prev_points
 
-                users_collection.update_one({'user_id': user_id}, {'$unset': {'pubs_answers'}})
+                users_collection.update_one({'user_id': user_id}, {'$unset': {'pubs_answers': None}})
 
             message = f"The previous MIG Pubs Question Set is over. Your new score is {points}."
 
-        else if prev_category == TRAINING:
+        elif prev_category == TRAINING:
             if answer == prev_answer[0]:
                 users_collection.update_one({'user_id': user_id}, {'$inc': {'points': prev_points}})
                 points += prev_points
 
-            users_collection.update_one({'user_id': user_id}, {'$unset': {'training_answer'}})   
+            users_collection.update_one({'user_id': user_id}, {'$unset': {'training_answer': None}})
 
             message = f"The previous MIG Training Question is over. Your new score is {points}."
 
@@ -254,40 +259,37 @@ async def announce_prev(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return NEW_QN_LINK
 
 async def set_new_qn_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.qn_data["qn_link"] = update.message.text
+    context.user_data["qn_link"] = update.message.text
     await update.message.reply_text("Enter the link for the answers to the new question.")
     return NEW_ANS_LINK
 
 async def set_new_ans_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.qn_data["ans_link"] = update.message.text
+    context.user_data["ans_link"] = update.message.text
     await update.message.reply_text("Enter the answers to the new question, in a string separated by underscores. ie: 6_nine_42_zero")
     return NEW_ANS_TEXT
 
 async def set_new_ans_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.qn_data["ans_text"] = update.message.text.split("_")
+    context.user_data["ans_text"] = update.message.text.split("_")
     await update.message.reply_text("Enter the text you want to send as the announcement. The format in which the announcement will be made is as follows: \n\n<message>\n\nPrevious Answer Link: <link>\nNew Question Link: <link>")
     return NEW_ANNOUNCEMENT_TEXT
 
 async def set_new_announcement_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.qn_data["announcement_text"] = update.message.text
-    return WRITE_NEW_DATA
+    context.user_data["announcement_text"] = update.message.text
 
-async def write_new_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    problems_collection.update_one({'_id': context.qn_data["_id"]}, {'$set': {'type': context.qn_data['type']}}, upsert=True)
-    problems_collection.update_one({'_id': context.qn_data["_id"]}, {'$set': {'qn_link': context.qn_data['qn_link']}}, upsert=True)
-    problems_collection.update_one({'_id': context.qn_data["_id"]}, {'$set': {'ans_link': context.qn_data['ans_link']}}, upsert=True)
-    problems_collection.update_one({'_id': context.qn_data["_id"]}, {'$set': {'ans_text': context.qn_data['ans_text']}}, upsert=True)
+    problems_collection.update_one({'_id': context.user_data["_id"]}, {'$set': {'type': context.user_data['type']}}, upsert=True)
+    problems_collection.update_one({'_id': context.user_data["_id"]}, {'$set': {'qn_link': context.user_data['qn_link']}}, upsert=True)
+    problems_collection.update_one({'_id': context.user_data["_id"]}, {'$set': {'ans_link': context.user_data['ans_link']}}, upsert=True)
+    problems_collection.update_one({'_id': context.user_data["_id"]}, {'$set': {'ans_text': context.user_data['ans_text']}}, upsert=True)
 
-    message = f"{context.qn_data["announcement_text"]}\n\n"
+    message = f"{context.user_data['announcement_text']}\n\n"
 
-    if prev_problem is not None:
-        message += f"Previous Answer Link: {context.prev_problem['ans_link']}\n"
+    if context.user_data.get('prev_ans_link') is not None:
+        message += f"Previous Answer Link: {context.user_data['prev_ans_link']}\n"
 
-    message += f"New Question Link: {context.qn_data['qn_link']}"
+    message += f"New Question Link: {context.user_data['qn_link']}"
 
-    await update.message.reply_text(message)
+    await bot.send_message(chat_id=os.environ['CHAT_ID'], text=message, parse_mode='markdown')
     return ConversationHandler.END
-    
 
 # End of questions code
 
@@ -565,20 +567,19 @@ if __name__ == '__main__':
     )
 
     announce_qn_handler = ConversationHandler(
-        entry_points=[CommandHandler("announce", announce_new_problem)],
+        entry_points=[CommandHandler("announce", set_new_type)],
         states={
-            NEW_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_type)],
             ANNOUNCE_PREV: [MessageHandler(filters.TEXT & ~filters.COMMAND, announce_prev)],
             NEW_QN_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_qn_link)],
             NEW_ANS_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_ans_link)],
             NEW_ANS_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_ans_text)],
             NEW_ANNOUNCEMENT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_announcement_text)],
-            WRITE_NEW_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, write_new_data)],
         },
         fallbacks=[CommandHandler("cancel", cancel_conv)],
     )
 
     application.add_handler(conv_start_handler)
+    application.add_handler(announce_qn_handler)
     application.add_handler(CommandHandler("answertraining", answer_training))
     application.add_handler(CommandHandler("answerpubs", answer_pubs))
     application.add_handler(CommandHandler("game", game_start))
