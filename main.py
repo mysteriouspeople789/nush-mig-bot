@@ -182,6 +182,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, sendConfirm
 @restricted_admin
 async def set_new_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    await update.message.reply_text("Hello! If you unintentionally wrote this command, type /cancel at any time to cancel the operation, and nothing will be saved.")
+
     qn_data = {
         '_id': TRAINING,
         'type': 'easy',
