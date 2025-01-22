@@ -60,7 +60,7 @@ valid_types = list(type_identity.keys())
 
 # Database
 db = client.get_database('main')
-users_collection = db.get_collection('users')
+users_collection = db.get_collection('users2025')
 problems_collection = db.get_collection('problems')
 games_collection = db.get_collection('games')
 
