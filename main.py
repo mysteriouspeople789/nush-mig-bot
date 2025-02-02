@@ -62,7 +62,6 @@ valid_types = list(type_identity.keys())
 db = client.get_database('main')
 users_collection = db.get_collection('users2025')
 problems_collection = db.get_collection('problems')
-games_collection = db.get_collection('games')
 
 bot = Bot(token=os.environ['BOT_TOKEN'])
 
@@ -393,12 +392,7 @@ async def game_end_job(context: ContextTypes.DEFAULT_TYPE):
     high_score = max(curr_score, correct_count)
     await context.bot.send_message(chat_id=chat_id,
                                    text=f"Game over! You got {correct_count} correct answers. Your high score: {high_score}")
-    game_data = {
-        'user_id': user_id,
-        'correct_count': correct_count,
-        'timestamp': datetime.now(),
-    }
-    games_collection.insert_one(game_data)
+
     users_collection.update_one({'user_id': user_id}, {'$set': {'month_points': high_score}}, upsert=True)
     # Reset user data
     context.user_data.clear()
