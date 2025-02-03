@@ -524,8 +524,8 @@ async def send_next_qn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def game_end_job(context: ContextTypes.DEFAULT_TYPE):
 
     chat_id, user_id, context = context.job.data
+    game_score = context.user_data['game_score']
     user_data = users_collection.find_one({'user_id': user_id})
-    game_score = user_data.get('game_score', 0)
     high_score = user_data.get("month_points", game_score)
     high_score = max(high_score, game_score)
     await context.bot.send_message(chat_id=chat_id,
