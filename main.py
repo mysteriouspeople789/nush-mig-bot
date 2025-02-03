@@ -167,14 +167,15 @@ async def answer_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please provide an answer after the command. Example: /answertraining 42")
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, sendConfirmation=True):
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, sendConfirmation=True, clearUserData=True):
     if context.user_data.get('game_active', False):
         job = context.user_data.get('game_end_job')
         if job:
             job.schedule_removal()
         if sendConfirmation:
             await update.message.reply_text("Game cancelled!")
-        context.user_data.clear()
+        if clearUserData:
+            context.user_data.clear()
 
 @restricted_admin
 async def set_new_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -510,7 +511,7 @@ async def send_next_qn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Game ended
     if context.user_data["game_wrongs"] >= 3 or context.user_data['game_qn'] > 30:
         await update.message.reply_text(f"The game is over. You can try again by typing /game!")
-        await cancel(update, context, False)
+        await cancel(update, context, False, False)
         context.user_data['game_end_job'] = context.job_queue.run_once(game_end_job, when=0,
                                                                        data=(update.message.chat_id, update.message.from_user.id, context))
         return
