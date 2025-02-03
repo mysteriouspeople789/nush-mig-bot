@@ -303,8 +303,10 @@ async def check_last_qn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     correct = False
 
     if prev_qn <= 2:
-        correct = list(map(int, correct_ans)) == sorted(map(int, user_answer.split()))
-        correct_ans = " ".join(correct_ans)
+        try:
+            correct = list(map(int, correct_ans.split())) == sorted(map(int, user_answer.split()))
+        except:
+            correct = False
 
     else:
         correct = correct_ans == user_answer
@@ -343,7 +345,7 @@ async def gen_new_qn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['game_correct_ans'] = " ".join(map(str, sorted(factors)))
         qn_text = f"Find the prime factorisation of {number}. Give your answer in space separated integers, ie: 2 3 3 5 7 7 7"
 
-    else if curr_qn == 3:
+    elif curr_qn == 3:
         qn_text = f"Find the sum of roots of:\n"
         order = random.randrange(5, 17)
 
@@ -473,7 +475,8 @@ async def gen_new_qn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         qn, anss = qns[curr_qn - 4]
-        order = random.shuffle([0, 1, 2, 3, 4])
+        order = [0, 1, 2, 3, 4]
+        random.shuffle(order)
 
         context.user_data['game_correct_ans'] = chr(ord('A') + order[0])
 
@@ -502,28 +505,28 @@ async def send_next_qn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.user_data.get('game_active', False): return
 
-    check_last_qn()
+    await check_last_qn(update, context)
 
     # Game ended
     if context.user_data["game_wrongs"] >= 3 or context.user_data['game_qn'] > 30:
         await update.message.reply_text(f"The game is over. You can try again by typing /game!")
-        game_end_job(update, context)
+        await cancel(update, context, False)
+        context.user_data['game_end_job'] = context.job_queue.run_once(game_end_job, when=0,
+                                                                       data=(update.message.chat_id, update.message.from_user.id, context))
         return
 
-    gen_new_qn()
+    await gen_new_qn(update, context)
 
     context.user_data['game_qn'] += 1
 
 
 async def game_end_job(context: ContextTypes.DEFAULT_TYPE):
 
-    if not context.user_data.get('game_active', False): return
-
     chat_id, user_id, context = context.job.data
-    game_score = context.user_data.get('game_score', 0)
     user_data = users_collection.find_one({'user_id': user_id})
+    game_score = user_data.get('game_score', 0)
     high_score = user_data.get("month_points", game_score)
-    high_score = max(curr_score, game_score)
+    high_score = max(high_score, game_score)
     await context.bot.send_message(chat_id=chat_id,
                                    text=f"Your score is {game_score}. Your (updated) high score is {high_score}.")
 
