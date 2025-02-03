@@ -3,8 +3,6 @@ import math
 import random
 import re
 import time
-from functools import wraps
-from itertools import permutations, product
 
 import certifi
 import requests
@@ -291,112 +289,247 @@ async def set_new_announcement_text(update: Update, context: ContextTypes.DEFAUL
 
 # End of questions code
 
-# Game code (use 24 as a filler)
-def evaluate_expression(expr):
-    try:
-        return eval(expr)
-    except ZeroDivisionError:
-        return None
+# Start of game code
 
+async def check_last_qn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-def generate_all_expressions(nums):
-    operators = ['+', '-', '*', '/']
-    perms = permutations(nums)
-    expressions = set()
+    prev_qn = context.user_data['game_qn'] - 1
+    correct_ans = context.user_data['game_correct_ans']
 
-    for perm in perms:
-        a, b, c, d = perm
-        op_combos = product(operators, repeat=3)
-        for ops in op_combos:
-            op1, op2, op3 = ops
-            expressions.add(f"({a}{op1}{b}){op2}({c}{op3}{d})")
-            expressions.add(f"({a}{op1}({b}{op2}{c})){op3}{d}")
-            expressions.add(f"(({a}{op1}{b}){op2}{c}){op3}{d}")
-            expressions.add(f"{a}{op1}(({b}{op2}{c}){op3}{d})")
-            expressions.add(f"{a}{op1}({b}{op2}({c}{op3}{d}))")
+    if prev_qn == 0: return
 
-    return expressions
-
-
-def find_solution(nums):
-    all_expressions = generate_all_expressions(nums)
-    for expr in all_expressions:
-        if not evaluate_expression(expr) is None and round(evaluate_expression(expr), 5) == 24:
-            return expr
-    return "-1"
-
-
-async def send_next_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'correct_count' not in context.user_data or not context.user_data.get('game_active', False):
-        return
-
-    # Generate two random numbers and their sum
-    number1 = random.randrange(1, 10)
-    number2 = random.randrange(1, 10)
-    number3 = random.randrange(1, 10)
-    number4 = random.randrange(1, 10)
-    if random.random() < 0.8:
-        while find_solution([number1, number2, number3, number4]) == "-1":
-            number1 = random.randrange(1, 10)
-            number2 = random.randrange(1, 10)
-            number3 = random.randrange(1, 10)
-            number4 = random.randrange(1, 10)
-    context.user_data['game_numbers'] = [number1, number2, number3, number4]
-
-    await update.message.reply_text(f"{number1} {number2} {number3} {number4}")
-
-
-def is_valid_user_expression(user_expr, nums):
-    try:
-        if not re.match(r'^[\d+\-*/()\s]+$', user_expr) or '**' in user_expr or '//' in user_expr:
-            return False
-
-        # Check if the user's expression evaluates to 24
-        if not evaluate_expression(user_expr) is None and round(evaluate_expression(user_expr), 5) != 24:
-            return False
-
-        # Check if the user's expression uses exactly the provided numbers
-        used_numbers = [int(n) for n in user_expr if n.isdigit()]
-        if sorted(used_numbers) != sorted(nums):
-            return False
-
-        return True
-    except:
-        return False
-
-
-async def game_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_answer = update.message.text.strip()
-    solution = find_solution(context.user_data['game_numbers'])
 
-    if user_answer == solution or is_valid_user_expression(user_answer, context.user_data['game_numbers']):
-        context.user_data['correct_count'] += 1
-        await update.message.reply_text("Correct!")
+    correct = False
 
-    elif solution == "-1":
-        await update.message.reply_text("Wrong :(")
-        await update.message.reply_text("There is actually no solution.")
+    if prev_qn <= 2:
+        correct = list(map(int, correct_ans)) == sorted(map(int, user_answer.split()))
+        correct_ans = " ".join(correct_ans)
 
     else:
-        await update.message.reply_text("Wrong :(")
-        await update.message.reply_text(f"A possible solution is {solution}.")
+        correct = correct_ans == user_answer
 
-    await send_next_number(update, context)
+    if correct:
+        await update.message.reply_text("Correct!")
+        points_distribution = [3, 5, 7]
+        context.user_data["game_score"] += points_distribution[(prev_qn - 1) // 10]
+    else:
+        await update.message.reply_text(f"Incorrect :(. The correct answer is {correct_ans}")
+        context.user_data["game_wrongs"] += 1
+
+def find_prime_factors(n):
+    i = 2
+    factors = []
+    while i * i <= n:
+        if n % i:
+            i += 1
+        else:
+            n //= i
+            factors.append(i)
+
+    if n > 1:
+        factors.append(n)
+
+    return factors
+
+async def gen_new_qn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    curr_qn = context.user_data['game_qn']
+    qn_text = ""
+
+    if curr_qn <= 2:
+        number = random.randrange(100, 10000)
+        factors = find_prime_factors(number)
+        context.user_data['game_correct_ans'] = " ".join(map(str, sorted(factors)))
+        qn_text = f"Find the prime factorisation of {number}. Give your answer in space separated integers, ie: 2 3 3 5 7 7 7"
+
+    else if curr_qn == 3:
+        qn_text = f"Find the sum of roots of:\n"
+        order = random.randrange(5, 17)
+
+        coeffs = [random.choice((-1, 1)) * random.randrange(1, 100) for i in range(order + 1)]
+        negscndlst = -coeffs[-2]
+        lst = coeffs[-1]
+
+        if lst < 0:
+            negscndlst = -negscndlst
+            lst = -lst
+
+        gcd = math.gcd(abs(negscndlst), abs(lst))
+        negscndlst //= gcd
+        lst //= gcd
+
+        context.user_data['game_correct_ans'] = str(100 * negscndlst + lst)
+
+        for i in range(order, -1, -1):
+            if i != order:
+                qn_text += [" + ", " - "][coeffs[i] < 0]
+
+            elif coeffs[i] < 0:
+                qn_text += "-"
+
+            qn_text += f"{abs(coeffs[i])}"
+
+            if i == 1:
+                qn_text += "x"
+
+            elif i != 0:
+                qn_text += f"x^{i}"
+
+        qn_text += " = 0\n"
+
+        qn_text += "Express your answer in a single integer x, where x = 100A + B, and the sum of roots is A / B."
+
+    else:
+        qn_text = "The next question is a Multiple Choice Question."
+
+        qns = [
+            ("Let a and b be positive real numbers such that a <= b and 1/a + 1/b = 1/ab."
+             "Find the smallest possible value of k such that b - a < k for all a and b that satisfy the above criteria.",
+            ["1", "2", "5/2", "1/2", "2/3"]),
+
+            ("Find the smallest root of x^3 + 7x^2 + 7x - 15 = 0.",
+            ["-5", "-8", "-3", "1", "5"]),
+
+            ("If sqrt(x + a) - sqrt(2x + b) = sqrt(y + a) - sqrt(2025y + b) = 0, find the prime factorisation of n if x = ny.",
+            ["2^3 x 11 x 23", "3^4 x 5^2", "43 x 47", "7^2 x 41", "2^2 x 3 x 13^2"]),
+
+            ("Find the roots of x^2 - 10x + 21 = 0.",
+            ["3, 7", "-3, -7", "3, 5", "5 + i sqrt(5), 5 - i sqrt(5)", "-5 + sqrt(46), -5 - sqrt(46)"]),
+
+            ("Find the roots of 6x^2 - 17x = 198.\n"
+             "I.   -9/2\n"
+             "II.   9/2\n"
+             "III.    7\n"
+             "IV.  22/3\n",
+            ["II and IV", "I and III", "II and III", "I and IV", "III and IV"]),
+
+            ("Which of the following is a square?",
+            ["254016", "121211", "141400", "156009", "182818"]),
+
+            ("How many real roots are there to the equation\n"
+             "x^11 + x^10 + x^9 + x^8 + ... + x + 1 = 0?",
+            ["1", "3", "4", "5", "7"]),
+
+            ("d/dx [x / (x^2 + 2)] =",
+            ["(2-x^2)/(x^2+2)^2", "(x^2-2)/(x^2+2)^2", "2/(x^2+2)^2", "(2-x)/(x^2+2)^2", "(x-2)/(x^2+2)^2"]),
+
+            ("d/dx [ln(tan(x))] =",
+            ["sec^2(x)cot(x)", "sec^2(x)tan(x)", "sec^2(x)csc(x)", "csc^2(x)sec(x)", "csc^2(x)cot(x)"]),
+
+            ("d/dx [sin(x^2) / cos(x^2)] =",
+            ["2x sec^2(x^2)", "2x csc^2(x^2)", "-2x sec^2(x^2)", "-2x csc^2(x^2)", "-2x cot^2(x^2)"]),
+
+            ("d/dx [e^(4tan(x))] =",
+            ["4sec^2(x) e^(4tan(x))", "16sec^2(x) e^(4tan(x))", "sec^2(x) e^(4tan(x))", "16csc^2(x) e^(4tan(x))", "4csc^2(x) e^(4tan(x))"]),
+
+            ("d/dx [ln(sin(x^2+1))] =",
+            ["2x cot(x^2+1)", "2x csc(x^2+1)", "2x sec(x^2+1)", "2x cos(x^2+1)", "2x tan(x^2+1)"]),
+
+            ("∫[ln(3x)] dx =",
+            ["xln(3x)-x+c", "xln(3x)-3+c", "xln(3x)-3x+c", "3xln(3x)-3x+c", "3xln(3x)-x+c"]),
+
+            ("∫[tan(x)] dx =",
+            ["ln|sec x|+c", "ln|sin x|+c", "ln|cot x|+c", "ln|cos x|+c", "ln|csc x|+c"]),
+
+            ("∫[(1/sqrt(x))+(1/x^2)] dx =",
+            ["2sqrt(x)-1/x+c", "2sqrt(x)-2/x+c", "sqrt(x)+2/x+c", "2sqrt(x)+1/x+c", "sqrt(x)+1/x+c"]),
+
+            ("∫[1/(x^2+2)] dx =",
+            ["arctan(x/sqrt2)/sqrt2+c", "arctan(x/2)/sqrt2+c", "arctan(x/sqrt2)/2+c", "arctan(x)/sqrt2+c", "arctan(x)/2+c"]),
+
+            ("∫[1/sqrt(x^2+1)] dx =",
+            ["ln|sqrt(x^2+1)+x|+c", "ln|x^2+1+sqrt(x)|+c", "ln|sqrt(x^2+1)+2x|+c", "ln|x^2+1+2sqrt(x)|+c", "ln|x^2+1+sqrt(2x)|+c"]),
+
+            ("∫[x/(x+1)] dx =",
+            ["x-ln|x+1|+c", "x-ln(x+1)+c", "x+1-ln(x+1)+c", "x^2-x-ln|x+1|+c", "x-ln|x|+c"]),
+
+            ("∫[4sinx/(1-cosx)] dx =",
+            ["4ln|1-cosx|+c", "4ln|4-cosx|+c", "4ln(2sin^2(x))+c", "4ln(2sinx)+c", "4ln(4-cosx)+c"]),
+
+            ("∫[arctan(x)] dx =",
+            ["xarctan(x)-½(ln(1+x^2))+c", "arctan(x)-ln(1+x^2)+c", "arctan(x)-ln(x^2)+c", "xarctan(x)-ln(1+x^2)+c", "arctan(x)-½(ln(1+x^2))+c"]),
+
+            ("∫[sin(2x)sin(3x)] dx =",
+            ["(1/10)(5sin(x)-sin(5x))+c", "(1/10)(sin(x)-sin(5x))+c", "(1/10)(sin(5x)-sin(x))+c", "(1/5)(sin(x)-sin(5x))", "(1/5)(sin(5x)-5sin(x))+c"]),
+
+            ("∫[x^3/(x^2+4x+3)] dx =",
+            ["½(x^2)-4x-½(ln|x+1|)+27/2(ln|x+3|)+c", "½(x^2)-4-½(ln|x+1|)+27/2(ln|x+3|)+c", "½(x^2)-4-ln|x+1|+27/2(ln|x+3|)+c", "x^2-4x-ln|x+1|+27/2(ln(x+3))+c", "x^2-4-ln|x+1|+27/2(ln(x+3))+c"]),
+
+            ("∫[(x^3-2x+1)/x^2] dx =",
+            ["½(x^2)-2ln|x|-(1/x)+c", "½(x^2)-ln|x|-(1/x)+c", "¼(x^2)-2ln|x|-(2/x)+c", "¼(x^2)-ln|x|-(2/x)+c", "¼(x^2)-ln|x|-(1/x)+c"]),
+
+            ("∫[(x+4)/(x^2+4x+13)] dx =",
+            ["½(ln|x^2+4x+13|)+⅔tan^-1((x+2)/3)+c", "½(ln|x^2+4x+13|)+⅓tan^-1(x+2)+c", "½(ln|x^2+4x+13|)+⅓tan^-1((x+2)/3)+c", "(ln|x^2+4x+13|)+⅔tan^-1((x+2)/3)+c", "(ln|x^2+4x+13|)+⅓tan^-1(x+2)+c"]),
+
+            ("∫[1/sqrt(-x^2+2x+15)] dx =",
+            ["arcsin((x-1)/4)+c", "arcsin((x-2)/4)+c", "arcsin((x-1)/2)+c", "arcsin(x/4)+c", "arcsin(x/2)+c"]),
+
+            ("∫[tan^2(x)] dx =",
+            ["tanx-x+c", "xtanx-x+c", "xtan^2x-x+c", "xtanx+c", "tanx+c"]),
+
+            ("∫[sin^2(x)] dx =",
+            ["¼(2x-sin2x)+c", "½(2x-sin2x)+c", "¼(2x-sinx)+c", "¼(x-sin2x)+c", "½(x-sinx)+c"]),
+        ]
+
+        qn, anss = qns[curr_qn - 4]
+        order = random.shuffle([0, 1, 2, 3, 4])
+
+        context.user_data['game_correct_ans'] = chr(ord('A') + order[0])
+
+        anss_ = [None for i in range(5)]
+        for i in range(5):
+            anss_[order[i]] = anss[i]
+
+        qn_text += f"{qn}\n"
+
+        for i in range(5):
+            qn_text += f"{chr(ord('A') + i)}. {anss_[i]}\n"
+
+        qn_text += "\nMake sure you enter your option in upper case!"
+
+    await update.message.reply_text(qn_text)
+
+async def send_next_qn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if 'game_score' not in context.user_data: return
+
+    if 'game_wrongs' not in context.user_data: return
+
+    if 'game_qn' not in context.user_data: return
+
+    if 'game_correct_ans' not in context.user_data: return
+
+    if not context.user_data.get('game_active', False): return
+
+    check_last_qn()
+
+    # Game ended
+    if context.user_data["game_wrongs"] >= 3 or context.user_data['game_qn'] > 30:
+        await update.message.reply_text(f"The game is over. You can try again by typing /game!")
+        game_end_job(update, context)
+        return
+
+    gen_new_qn()
+
+    context.user_data['game_qn'] += 1
 
 
 async def game_end_job(context: ContextTypes.DEFAULT_TYPE):
+
+    if not context.user_data.get('game_active', False): return
+
     chat_id, user_id, context = context.job.data
-    correct_count = context.user_data.get('correct_count', 0)
+    game_score = context.user_data.get('game_score', 0)
     user_data = users_collection.find_one({'user_id': user_id})
-    curr_score = user_data.get("month_points", correct_count)
-    high_score = max(curr_score, correct_count)
+    high_score = user_data.get("month_points", game_score)
+    high_score = max(curr_score, game_score)
     await context.bot.send_message(chat_id=chat_id,
-                                   text=f"Game over! You got {correct_count} correct answers. Your high score: {high_score}")
+                                   text=f"Your score is {game_score}. Your (updated) high score is {high_score}.")
 
     users_collection.update_one({'user_id': user_id}, {'$set': {'month_points': high_score}}, upsert=True)
     # Reset user data
     context.user_data.clear()
-
 
 @restricted
 async def game_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -406,15 +539,24 @@ async def game_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Please use the /start command to enter your name and class before using this command.")
         return
+
     await cancel(update, context, False)
     context.user_data['game_active'] = True
-    context.user_data['correct_count'] = 0
-    context.user_data['game_end_job'] = context.job_queue.run_once(game_end_job, when=60,
+    context.user_data['game_score'] = 0
+    context.user_data['game_wrongs'] = 0
+    context.user_data['game_correct_ans'] = 0
+    context.user_data['game_qn'] = 1
+    context.user_data['game_end_job'] = context.job_queue.run_once(game_end_job, when=180,
                                                                    data=(update.message.chat_id, user.id, context))
-    await update.message.reply_text(f"Use the following 4 numbers and the 4 operations (+, -, *, /) with brackets to "
-                                    f"achieve the number 24! You may use the numbers in any order. If you think there "
-                                    f"is no solution, answer -1.\nAnswer as many as you can in 1 minute!")
-    await send_next_number(update, context)
+
+    await update.message.reply_text(f"In the following minute, you will be doing 30 questions.\n"
+                                    f"The first 10 are easy, being worth 3 points each.\n"
+                                    f"The next 10 are medium, and are worth 5 points each.\n"
+                                    f"The last 10 are hard, and are worth 7 points each.\n"
+                                    f"However, if you answer 3 questions wrong, the game is over.\n"
+                                    f"Good luck!")
+
+    await send_next_qn(update, context)
 
 
 async def game_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -538,7 +680,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('game_active', False):
-        await game_answer(update, context)
+        await send_next_qn(update, context)
 
 
 async def announce():
