@@ -635,6 +635,7 @@ async def end_ongoing_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     highest_month_points = top_users[0]["month_points"]
     if highest_month_points == 0:
         return
+
     for i, user in enumerate(top_users):
         user_name = user['name']
         user_id = user['user_id']
@@ -642,11 +643,15 @@ async def end_ongoing_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         users_collection.update_one({'user_id': user_id},
                                     {'$inc': {'points': 200 * user_month_points / highest_month_points}})
-        users_collection.update_one({'user_id': user_id}, {'$unset': {'month_points'}})
+        users_collection.update_one({'user_id': user_id}, {'$unset': {'month_points' : ''}})
 
-    message = 'The ongoing game has ended. Check your scores with /leaderboard and /points now!'
-    await bot.send_message(chat_id=chat_id, text=message, parse_mode='markdown')
+        message = 'The ongoing game has ended. Check your scores with /leaderboard and /points now!'
+        await bot.send_message(chat_id=user_id, text=message, parse_mode='markdown')
 
+@restricted_admin
+async def reset_scores(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    users_collection.update_many({}, {'$unset': {"month_points": ''}})
+    users_collection.update_many({}, {'$set': {"points": 0}})
 
 # End of game code
 
@@ -727,6 +732,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("endgame", end_ongoing_game))
+    application.add_handler(CommandHandler("resetscores", reset_scores))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     application.run_polling()
