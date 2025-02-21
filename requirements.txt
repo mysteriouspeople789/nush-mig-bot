@@ -1,0 +1,6 @@
+certifi
+requests
+python-telegram-bot
+pymongo
+pytz
+boto3
