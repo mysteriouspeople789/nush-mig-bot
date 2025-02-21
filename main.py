@@ -542,7 +542,7 @@ async def game_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Please use the /start command to enter your name and class before using this command.")
         return
 
-    if context is not None: await cancel(update, context, False)
+    await cancel(update, context, False)
 
     context.user_data['game_active'] = True
     context.user_data['game_score'] = 0
